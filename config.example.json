@@ -1,0 +1,14 @@
+{
+  "endpoint": "https://api.openai.com/v1/chat/completions",
+  "api_key": "",
+  "model": "gpt-4o-mini",
+  "port": 8619,
+  "probe_interval": 60,
+  "delay": {
+    "base": 1.2,
+    "per_char": 0.13,
+    "min": 1.5,
+    "max": 20.0,
+    "jitter": 0.15
+  }
+}

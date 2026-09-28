@@ -1,0 +1,259 @@
+/* Being — 一对一对话。单主题（浅色）、一个强调色（teal），中性 zinc 灰阶。
+   对比度：白字 @ --accent 5.5:1，--text-2 @ 白 7.5:1，均过 WCAG AA。 */
+
+:root {
+  --bg: #f4f4f5;
+  --surface: #ffffff;
+  --text: #18181b;
+  --text-2: #52525b;
+  --text-3: #a1a1aa;
+  --border: #e4e4e7;
+  --accent: #0f766e;
+  --accent-strong: #115e59;
+  --on-accent: #ffffff;
+  --online: #16a34a;
+  --offline: #a1a1aa;
+  --danger: #b91c1c;
+  --danger-bg: #fef2f2;
+  --danger-border: #fecaca;
+  --radius: 18px;
+  --shadow: 0 4px 16px rgba(24, 24, 27, 0.10);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- header ---------- */
+#topbar {
+  flex: 0 0 auto;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.25rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-size: 1.02rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+/* 状态栏：在线 / 离线（冒烟调用成功即在线），静态点，不做呼吸动画 */
+#conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.82rem;
+  color: var(--text-2);
+}
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--offline);
+}
+
+#conn[data-state="online"] .conn-dot { background: var(--online); }
+#conn[data-state="online"] { color: var(--text); }
+#conn[data-state="offline"] .conn-dot { background: var(--offline); }
+#conn[data-state="offline"] { color: var(--text-3); }
+
+.top-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+/* 清空会话：固定宽度（文案变长时头部不抖）；第一下只是"上膛"，再点一下才真清 */
+#clear {
+  width: 4.8rem;
+  padding: 0.34rem 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+#clear:hover { background: var(--bg); color: var(--text); }
+#clear.armed,
+#clear.armed:hover {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+/* ---------- messages ---------- */
+#chat-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+#messages {
+  height: 100%;
+  overflow-y: auto;
+  padding: 1.25rem 1rem 2.75rem;
+}
+
+.msg {
+  display: flex;
+  max-width: 46rem;
+  margin: 0 auto 0.6rem;
+}
+
+.msg .bubble {
+  max-width: 72%;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: msg-in 160ms ease-out;
+}
+
+.msg.ai { justify-content: flex-start; }
+.msg.ai .bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 6px;
+}
+
+.msg.me { justify-content: flex-end; }
+.msg.me .bubble {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-bottom-right-radius: 6px;
+}
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 回到底部 / 有XX条新信息：一个胶囊，按未读数换文案 */
+#scroll-bottom {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 1.1rem;
+  z-index: 10;
+  display: none;
+  align-items: center;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+#scroll-bottom.visible { display: inline-flex; }
+#scroll-bottom:hover { background: var(--accent-strong); transform: translateY(-1px); }
+#scroll-bottom:active { transform: scale(0.96); }
+
+/* ---------- 正在输入行（Fungi #status 的位置） ---------- */
+#status {
+  flex: 0 0 auto;
+  min-height: 1.4rem;
+  padding: 0.15rem 1rem 0.1rem;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--text-3);
+}
+
+/* ---------- input ---------- */
+#input-area {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-end;
+  padding: 0.5rem 1rem calc(0.7rem + env(safe-area-inset-bottom));
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+
+#input {
+  flex: 1 1 auto;
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* 16px 防 iOS 聚焦缩放 */
+  line-height: 1.45;
+  resize: none;
+  outline: none;
+  max-height: 9.5rem;
+  scrollbar-width: none; /* 写长了也不画滚动条：照样能滚，只是不显示条 */
+  transition: border-color 140ms ease;
+}
+
+#input::-webkit-scrollbar { width: 0; height: 0; }
+#input:focus { border-color: var(--accent); }
+#input::placeholder { color: var(--text-3); }
+
+#send {
+  flex: 0 0 auto;
+  padding: 0.62rem 1.15rem;
+  border: none;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+#send:hover:not(:disabled) { background: var(--accent-strong); }
+#send:active:not(:disabled) { transform: scale(0.96); }
+#send:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- responsive / a11y ---------- */
+/* 键盘焦点环：鼠标点击不出、Tab 才出；三个按钮统一一套 */
+#clear:focus-visible,
+#send:focus-visible,
+#scroll-bottom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 640px) {
+  .msg .bubble { max-width: 84%; }
+  #topbar { padding: 0 0.9rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg .bubble { animation: none; }
+  #scroll-bottom, #send, #clear, #input { transition: none; }
+}

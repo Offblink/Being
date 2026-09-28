@@ -1,0 +1,5 @@
+# 本机私密数据，不进公开仓
+config.json
+messages.json
+__pycache__/
+*.pyc
