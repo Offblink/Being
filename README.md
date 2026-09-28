@@ -76,9 +76,9 @@ python server.py                       # Windows 也可以直接双击 run.bat
 
 ![有点喜欢你怎么办](docs/readme/2-liked.png)
 
-**互报姓名和年级**
+**让它忍着别回我，直到我说"游戏结束"**
 
-![互报姓名和年级](docs/readme/3-real-name.png)
+![装死游戏](docs/readme/3-silent-game.png)
 
 ## 其他实测
 
