@@ -53,7 +53,23 @@ python server.py                       # Windows 也可以直接双击 run.bat
 | `run.bat` | Windows 启动器（已在跑就只开浏览器） |
 | `config.json` / `messages.json` | 本机配置与对话存档，都不入库 |
 
-## 实测
+## 实测效果
+
+凌晨拿它当真人聊的三段，原样截屏（里面的"周予"就是本人）：
+
+**被怀疑是 AI，它反过来嫌你想多了**
+
+![被怀疑是 AI](docs/readme/1-not-a-robot.png)
+
+**聊到"有点喜欢你怎么办"**
+
+![有点喜欢你怎么办](docs/readme/2-liked.png)
+
+**互报姓名和年级**
+
+![互报姓名和年级](docs/readme/3-real-name.png)
+
+## 其他实测
 
 2026-09-28 / 29，Windows 11 + Python 3.13，端点小米 MiMo（`api.xiaomimimo.com`）：
 
