@@ -40,6 +40,7 @@ body {
 
 /* ---------- header ---------- */
 #topbar {
+  position: relative;
   flex: 0 0 auto;
   height: 54px;
   display: flex;
@@ -77,16 +78,23 @@ body {
 #conn[data-state="offline"] .conn-dot { background: var(--offline); }
 #conn[data-state="offline"] { color: var(--text-3); }
 
+.top-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
 .top-right {
   display: inline-flex;
   align-items: center;
   gap: 1rem;
 }
 
-/* 清空会话：固定宽度（文案变长时头部不抖）；第一下只是"上膛"，再点一下才真清 */
+/* 头部这几个控件共用一套幽灵胶囊形状（会话 / 新会话 / 清空） */
+#sessions-toggle,
+#new-session,
 #clear {
-  width: 4.8rem;
-  padding: 0.34rem 0;
+  padding: 0.34rem 0.75rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: transparent;
@@ -97,12 +105,128 @@ body {
   transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
 }
 
+#sessions-toggle:hover,
+#new-session:hover,
 #clear:hover { background: var(--bg); color: var(--text); }
+
+/* 清空：固定宽度（文案从"清空"变"确定清空"时头部不抖）；第一下只是"上膛" */
+#clear { width: 4.8rem; padding: 0.34rem 0; }
 #clear.armed,
 #clear.armed:hover {
   border-color: var(--danger-border);
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+#sessions-toggle[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--bg);
+  color: var(--accent);
+}
+
+/* ---------- 会话列表（默认收起） ---------- */
+#sessions-panel {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  left: 1.25rem;
+  z-index: 20;
+  width: min(19rem, calc(100vw - 2.5rem));
+  max-height: min(60vh, 24rem);
+  overflow-y: auto;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+#new-session { display: block; width: 100%; margin-bottom: 0.3rem; }
+
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0 0.5rem;
+  padding: 0.42rem 0.5rem;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.session-row:hover { background: var(--bg); }
+.session-row.current { background: var(--bg); }
+.session-row.current .session-title { color: var(--accent); font-weight: 600; }
+
+.session-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+}
+
+.session-meta {
+  grid-column: 1;
+  font-size: 0.72rem;
+  color: var(--text-3);
+}
+
+.session-meta.typing { color: var(--accent); }
+
+/* 未读：红点带数字；面板收起时总数挂在「会话」按钮上 */
+.session-unread,
+.unread-badge {
+  min-width: 1.1rem;
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.session-unread { grid-row: 1 / span 2; grid-column: 2; }
+.unread-badge { margin-left: 0.3rem; }
+
+.session-acts {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  display: flex;
+  gap: 0.25rem;
+  opacity: 0.45;
+  transition: opacity 140ms ease;
+}
+
+.session-row:hover .session-acts { opacity: 1; }
+
+.session-act {
+  padding: 0.12rem 0.4rem;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.session-act:hover { border-color: var(--border); background: var(--surface); color: var(--text); }
+.session-act.armed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.rename-input {
+  width: 100%;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  outline: none;
 }
 
 /* ---------- messages ---------- */
@@ -240,7 +364,9 @@ body {
 #send:disabled { opacity: 0.4; cursor: default; }
 
 /* ---------- responsive / a11y ---------- */
-/* 键盘焦点环：鼠标点击不出、Tab 才出；三个按钮统一一套 */
+/* 键盘焦点环：鼠标点击不出、Tab 才出；按钮统一一套 */
+#sessions-toggle:focus-visible,
+#new-session:focus-visible,
 #clear:focus-visible,
 #send:focus-visible,
 #scroll-bottom:focus-visible {
@@ -251,9 +377,11 @@ body {
 @media (max-width: 640px) {
   .msg .bubble { max-width: 84%; }
   #topbar { padding: 0 0.9rem; }
+  #sessions-panel { left: 0.9rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .msg .bubble { animation: none; }
-  #scroll-bottom, #send, #clear, #input { transition: none; }
+  #scroll-bottom, #send, #clear, #sessions-toggle, #new-session, #input { transition: none; }
+  .session-acts { transition: none; }
 }

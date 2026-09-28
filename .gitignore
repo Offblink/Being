@@ -1,5 +1,6 @@
 # 本机私密数据，不进公开仓
 config.json
-messages.json
+messages.json*
+sessions/
 __pycache__/
 *.pyc

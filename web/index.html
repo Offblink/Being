@@ -8,12 +8,20 @@
 </head>
 <body>
 <header id="topbar">
-  <div class="brand">Being</div>
+  <div class="top-left">
+    <button id="sessions-toggle" type="button" aria-expanded="false" aria-controls="sessions-panel"
+            title="会话列表（每个会话是一个 Being 的记忆）">会话</button>
+    <div class="brand">Being</div>
+  </div>
   <div class="top-right">
     <div id="conn" data-state="pending" title="冒烟调用成功即在线">
       <span class="conn-dot"></span><span id="conn-text">检测中</span>
     </div>
-    <button id="clear" type="button" title="清空这个会话（无法撤销）">清空</button>
+    <button id="clear" type="button" title="清空这个 Being 的记忆（无法撤销）">清空</button>
+  </div>
+  <div id="sessions-panel" hidden>
+    <button id="new-session" type="button">新会话</button>
+    <div id="session-list"></div>
   </div>
 </header>
 
