@@ -171,14 +171,11 @@ function appendMessage(m) {
     wrap.appendChild(bubble);
   }
 
-  // 悬停出「引用」——只在有文字或图片的行上，且功能开着
-  const qbtn = document.createElement('button');
-  qbtn.type = 'button';
-  qbtn.className = 'quote-btn';
-  qbtn.title = '引用这条';
-  qbtn.textContent = '引用';
-  qbtn.addEventListener('click', () => setQuote(m));
-  wrap.appendChild(qbtn);
+  // 右键出「引用」（悬停按钮已撤：挡在气泡上方又难点中）
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    openCtxMenu(m, e.clientX, e.clientY);
+  });
 
   row.appendChild(wrap);
   msgs.appendChild(row);
@@ -190,6 +187,38 @@ function appendMessage(m) {
   }
   updateScrollBtn();
 }
+
+/* ---------- 右键菜单 ---------- */
+const ctxMenu = document.getElementById('ctx-menu');
+const ctxQuote = document.getElementById('ctx-quote');
+let ctxMsg = null;   // 正被右键的那条
+
+function openCtxMenu(m, x, y) {
+  ctxMsg = m;
+  ctxMenu.hidden = false;
+  const r = ctxMenu.getBoundingClientRect();
+  // 贴着指针开，但不许伸出屏幕（右下角右键时最要紧）
+  const left = Math.min(x, window.innerWidth - r.width - 8);
+  const top = Math.min(y, window.innerHeight - r.height - 8);
+  ctxMenu.style.left = Math.max(8, left) + 'px';
+  ctxMenu.style.top = Math.max(8, top) + 'px';
+}
+
+function closeCtxMenu() {
+  ctxMenu.hidden = true;
+  ctxMsg = null;
+}
+
+ctxQuote.addEventListener('click', () => {
+  if (ctxMsg) setQuote(ctxMsg);
+  closeCtxMenu();
+});
+// 收起时机：点别处、滚动、改窗口大小、按 Esc。
+// 右键本身不触发 click，所以开菜单不会被自己这一下关掉。
+document.addEventListener('click', closeCtxMenu);
+document.addEventListener('scroll', closeCtxMenu, true);
+window.addEventListener('resize', closeCtxMenu);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeCtxMenu(); });
 
 /* ---------- 引用 ---------- */
 function setQuote(m) {
@@ -681,9 +710,10 @@ function fillSettings(cfg, opts = {}) {
   const miss = cfg.missing || [];
   document.getElementById('set-gate-missing').textContent =
     miss.length ? `　现在还差：${miss.join('、')}` : '';
-  renderMeAvatar(cfg.me || {});
+  // features 必须先落地 —— 后面的渲染要按它开合头像那组按钮
   if (typeof cfg.features === 'boolean') features = !!cfg.features;
   syncPhotoBtn();
+  renderMeAvatar(cfg.me || {});
 }
 
 function renderMeAvatar(me) {
@@ -699,8 +729,16 @@ function renderMeAvatar(me) {
     fb.hidden = false;
     fb.textContent = name.slice(0, 1);
   }
-  document.getElementById('me-avatar-hint').textContent =
-    me.avatar_desc ? 'AI 看到的你：' + me.avatar_desc : (me.avatar ? '头像的描述还没算出来' : '');
+  // 门禁：生图/识图没填齐，换头像这组按钮不出现（跟发照片同一道门）。
+  // 按钮不见的同时必须就地说明原因 —— 否则用户只会在选完文件后撞上一句报错。
+  const canAvatar = !!features;
+  document.getElementById('me-avatar-pick').hidden = !canAvatar;
+  document.getElementById('me-avatar-clear').hidden = !canAvatar;
+  const bits = [];
+  if (!canAvatar) bits.push('生图还没填：换头像和发照片都用不了，填齐生图与识图即可');
+  if (me.avatar_desc) bits.push('AI 看到的你：' + me.avatar_desc);
+  else if (me.avatar) bits.push('头像的描述还没算出来');
+  document.getElementById('me-avatar-hint').textContent = bits.join('　·　');
 }
 
 async function openSettings() {

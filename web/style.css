@@ -251,7 +251,8 @@ body {
   align-items: flex-end;
   gap: 0.5rem;
   max-width: 46rem;
-  margin: 0 auto 0.6rem;
+  /* 行距要装得下脚下那行时间：1px + 0.66rem×1.5 ≈ 16.8px。1.4rem=22.4px 留 5.6px 余量 */
+  margin: 0 auto 1.4rem;
   position: relative;
 }
 
@@ -336,26 +337,33 @@ body {
   white-space: nowrap;
 }
 
-/* 引用按钮：悬停才出现，不占版面 */
-.quote-btn {
-  position: absolute;
-  top: -0.85rem;
-  right: 0;
-  opacity: 0;
-  padding: 0.08rem 0.45rem;
+/* 右键菜单：引用在这里出（悬停按钮已撤） */
+#ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 6.8rem;
+  padding: 0.25rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 10px;
   background: var(--surface);
-  color: var(--text-2);
-  font: inherit;
-  font-size: 0.68rem;
-  cursor: pointer;
-  transition: opacity 140ms ease;
-  pointer-events: none;
+  box-shadow: var(--shadow);
 }
-.msg.ai .quote-btn { right: auto; left: 0; }
-.bubble-wrap:hover .quote-btn { opacity: 1; pointer-events: auto; }
-.quote-btn:hover { border-color: var(--accent); color: var(--accent); }
+#ctx-menu[hidden] { display: none; }
+#ctx-menu button {
+  display: block;
+  width: 100%;
+  padding: 0.36rem 0.6rem;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+#ctx-menu button:hover { background: var(--bg); color: var(--accent); }
+#ctx-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .msg.flash .bubble,
 .msg.flash .photo { animation: msg-flash 900ms ease-out; }
@@ -377,10 +385,12 @@ body {
   pointer-events: none;
   transition: opacity 140ms ease;
 }
-.msg.ai::after { left: 2.4rem; }
+.msg.ai::after { left: 0; }   /* 贴紧左边 —— 时间在整行脚下，不跟气泡列对齐 */
 .msg.me::after { right: 0; }
 .msg[data-when]:hover::after { opacity: 1; }
-.msg:last-child { margin-bottom: 1.4rem; } /* 给悬停时间留出落脚的地方 */
+/* 悬停的这一行抬到上层：时间再长也不会被后面那条气泡盖住 */
+.msg:hover { z-index: 2; }
+.msg:last-child { margin-bottom: 1.8rem; } /* 最后一条的时间脚下还得有地方站 */
 
 .msg.ai { justify-content: flex-start; }
 .msg.ai .bubble {
@@ -804,26 +814,6 @@ body {
   border-top: 1px solid var(--border);
 }
 .set-foot .set-hint { flex: 1 1 auto; }
-#cfg-cancel,
-#cfg-save {
-  padding: 0.4rem 0.95rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-#cfg-cancel:hover { background: var(--bg); color: var(--text); }
-#cfg-save {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--on-accent);
-  font-weight: 650;
-}
-#cfg-save:hover:not(:disabled) { background: var(--accent-strong); }
-#cfg-save:disabled { opacity: 0.5; cursor: default; }
 
 .avatar-fallback { text-transform: none; }
 
@@ -836,8 +826,6 @@ body {
 #photo:focus-visible,
 #settings-toggle:focus-visible,
 #settings-close:focus-visible,
-#cfg-save:focus-visible,
-#cfg-cancel:focus-visible,
 #cfg-detect:focus-visible,
 #quote-clear:focus-visible,
 #scroll-bottom:focus-visible {
@@ -848,7 +836,6 @@ body {
 @media (max-width: 640px) {
   .bubble-wrap { max-width: 84%; }
   .avatar { width: 27px; height: 27px; font-size: 0.74rem; }
-  .msg.ai::after { left: 2rem; }
   #topbar { padding: 0 0.9rem; }
   #sessions-panel { left: 0.9rem; }
   #settings-toggle { left: 0.9rem; }
@@ -858,9 +845,9 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .msg .bubble, .msg .photo, #settings-panel { animation: none; }
-  .msg::after, .quote-btn { transition: none; }
+  .msg::after { transition: none; }
   #scroll-bottom, #send, #photo, #clear, #sessions-toggle, #new-session, #input,
-  #settings-toggle, #cfg-save { transition: none; }
+  #settings-toggle { transition: none; }
   .session-acts { transition: none; }
   #settings-toggle:hover { transform: none; }
 }
