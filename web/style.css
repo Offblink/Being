@@ -560,7 +560,7 @@ body {
 #quote-bar { flex: 0 0 auto; padding-bottom: 0.35rem; }
 #quote-inner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;   /* 多行引用时标签和 × 都靠上，别浮在半空 */
   gap: 0.5rem;
   max-width: 46rem;
   margin: 0 auto;
@@ -574,9 +574,10 @@ body {
 #quote-label { flex: 0 0 auto; color: var(--accent); font-weight: 650; }
 #quote-text {
   flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  /* 跟着被引用的那条走：整段换行显示，不再砍成一行 */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 #quote-clear {
   flex: 0 0 auto;

@@ -31,7 +31,8 @@ let unread = 0;          // 停在底部时收到的条数 → 胶囊文案
 let maxId = -1;          // 已渲染的最大消息 id（SSE 与 POST 响应可能乱序，按 id 去重）
 let currentTurn = 0;     // 最新一轮号；旧轮的 turn_end 按号忽略
 let typing = false;
-let features = false;    // 生图与识图是否都填了（昵称与发图片的总开关）
+let features = false;    // 生图与识图是否都填了（头像与发图片的总开关）
+let missingFeat = [];    // 具体还差哪一段（红条撤了，只在头像那儿就地提一句）
 let persona = {};        // 对方的人设：昵称、身份、头像…
 let myInfo = { nickname: '', avatar: '' };
 let avatarPending = [];  // 头像还在画的会话
@@ -705,11 +706,7 @@ function fillSettings(cfg, opts = {}) {
   const box = document.getElementById('detect-state');
   box.textContent = st.detail || '';
   box.dataset.known = st.known === true ? 'yes' : st.known === false ? 'no' : '';
-  const gate = document.getElementById('set-gate');
-  gate.hidden = !!cfg.features;
-  const miss = cfg.missing || [];
-  document.getElementById('set-gate-missing').textContent =
-    miss.length ? `　现在还差：${miss.join('、')}` : '';
+  missingFeat = Array.isArray(cfg.missing) ? cfg.missing : [];
   // features 必须先落地 —— 后面的渲染要按它开合头像那组按钮
   if (typeof cfg.features === 'boolean') features = !!cfg.features;
   syncPhotoBtn();
@@ -735,7 +732,7 @@ function renderMeAvatar(me) {
   document.getElementById('me-avatar-pick').hidden = !canAvatar;
   document.getElementById('me-avatar-clear').hidden = !canAvatar;
   const bits = [];
-  if (!canAvatar) bits.push('生图还没填：换头像和发照片都用不了，填齐生图与识图即可');
+  if (!canAvatar) bits.push(`${missingFeat.join('与') || '生图与识图'}还没填：换头像和发照片都用不了`);
   if (me.avatar_desc) bits.push('AI 看到的你：' + me.avatar_desc);
   else if (me.avatar) bits.push('头像的描述还没算出来');
   document.getElementById('me-avatar-hint').textContent = bits.join('　·　');

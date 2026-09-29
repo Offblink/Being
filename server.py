@@ -772,12 +772,22 @@ _PERSONA_SYSTEM = (
     "hobbies(爱好，一两个具体的)、traits(性格特点，一两个)、"
     "avatar_prompt(给自己的头像写的生图提示词)。\n"
     "硬要求：\n"
-    "1. age 必须决定头像风格——25 岁以下偏动漫、二次元、卡通猫狗；"
-    "40 岁以上偏风景、花草、静物特写、或像自拍的真人照。\n"
-    "2. 头像提示词里不许出现任何真实名人姓名，不许写文字/logo，要适合做头像的构图。\n"
-    "3. 这套底细要前后自洽、经得起追问：学生就该有学生的作息和烦恼，别写成百科全书。\n"
-    "4. 昵称要自然，别用明显是 AI 或品牌的名字。"
+    "1. **性别由程序指派，已经定了：{GENDER}。** 这一项你只能照抄，不许自己挑、不许写别的；"
+    "整套底细（昵称、身份、来自哪里、爱好、说话口吻、头像）都要围着它展开。\n"
+    "2. age 必须决定头像风格——25 岁以下偏动漫、二次元、卡通猫狗；"
+    "40 岁以上偏风景、花草、静物特写、或像自拍的真人照。"
+    "头像里的人物性别必须和指派的这一项一致。\n"
+    "3. 头像提示词里不许出现任何真实名人姓名，不许写文字/logo，要适合做头像的构图。\n"
+    "4. 这套底细要前后自洽、经得起追问：学生就该有学生的作息和烦恼，别写成百科全书。\n"
+    "5. 昵称要自然，别用明显是 AI 或品牌的名字。"
 )
+
+
+def _persona_system(gender: str) -> str:
+    """性别不让模型自己选 —— 实测连着抽好几次全落一边（全是女生），
+    偏成这样就没意思了。改成程序随机指派一个定值，模型只负责围着它演。
+    """
+    return _PERSONA_SYSTEM.replace("{GENDER}", gender)
 
 
 async def gen_persona(retries: int = 3) -> dict | None:
@@ -785,12 +795,13 @@ async def gen_persona(retries: int = 3) -> dict | None:
 
     踩过的坑：max_tokens 给 600 时，模型的 reasoning_content 与正文共用预算，
     JSON 经常被砍在半截 —— 正则找不到右括号，整份人设就静默丢了（实测 3 次里
-    1 次）。所以预算抬到 1600，并按 finish_reason=length 直接判截断重来。
+    把预算抬到 1600，并按 finish_reason=length 直接判截断重来。
     """
+    gender = random.choice(("男", "女"))  # 程序指派，重试也用同一个，别每次重试换一次
     for attempt in range(retries):
         payload = {
             "model": cfg["model"],
-            "messages": [{"role": "system", "content": _PERSONA_SYSTEM},
+            "messages": [{"role": "system", "content": _persona_system(gender)},
                          {"role": "user", "content": "开始吧，给自己定下来"}],
             "max_tokens": 1600,
             "temperature": 1.0,
@@ -826,6 +837,8 @@ async def gen_persona(retries: int = 3) -> dict | None:
         if not isinstance(data, dict) or not str(data.get("nickname") or "").strip():
             print(f"[persona] attempt {attempt + 1}: no nickname", flush=True)
             continue
+        # 性别一律以指派的为准 —— 模型就算自作主张写了个别的，也在这里被盖掉
+        data["gender"] = gender
         return {k: str(data.get(k) or "").strip()[:200] for k in
                 ("nickname", "identity", "age", "gender", "origin", "hobbies", "traits",
                  "avatar_prompt")}
