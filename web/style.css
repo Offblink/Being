@@ -774,14 +774,18 @@ body {
 .set-actions button:hover,
 #me-avatar-pick:hover { background: var(--bg); color: var(--text); border-color: var(--accent); }
 
-.set-row {
+/* 头像与昵称同一行：头像占左边一格，昵称那列吃掉剩下的宽度。
+   头像腾出位置后，换头像/移除两个按钮就落在下面那行、贴齐左边。 */
+.me-top {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
+  gap: 0.55rem;
+  margin-top: 0.4rem;
 }
-.set-row img,
-.set-row .avatar-fallback {
+.me-top label { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+.me-top img,
+.me-top .avatar-fallback {
+  flex: 0 0 auto;
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -789,13 +793,22 @@ body {
   border: 1px solid var(--border);
   background: var(--bg);
 }
-.set-row .avatar-fallback {
+.me-top .avatar-fallback {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-weight: 650;
   color: var(--text-2);
 }
+
+.set-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+/* 门禁关着时整行撤掉 —— .set-row 自带 display:flex 会盖掉 [hidden]，得显式写 */
+#me-avatar-actions[hidden] { display: none; }
 #me-avatar-clear:hover { background: var(--danger-bg); color: var(--danger); border-color: var(--danger-border); }
 #me-avatar-hint { display: block; margin-top: 0.4rem; }
 

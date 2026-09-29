@@ -98,10 +98,12 @@
 
     <section class="set-sec">
       <h3>我的资料</h3>
-      <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
-      <div class="set-row">
+      <div class="me-top">
         <img id="me-avatar-preview" alt="" hidden>
         <span id="me-avatar-fallback" class="avatar-fallback" hidden></span>
+        <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
+      </div>
+      <div class="set-row" id="me-avatar-actions">
         <button id="me-avatar-pick" type="button">换头像</button>
         <button id="me-avatar-clear" type="button" class="ghost">移除</button>
         <input type="file" id="me-avatar-input" accept="image/*" hidden>

@@ -729,6 +729,7 @@ function renderMeAvatar(me) {
   // 门禁：生图/识图没填齐，换头像这组按钮不出现（跟发照片同一道门）。
   // 按钮不见的同时必须就地说明原因 —— 否则用户只会在选完文件后撞上一句报错。
   const canAvatar = !!features;
+  document.getElementById('me-avatar-actions').hidden = !canAvatar;
   document.getElementById('me-avatar-pick').hidden = !canAvatar;
   document.getElementById('me-avatar-clear').hidden = !canAvatar;
   const bits = [];
