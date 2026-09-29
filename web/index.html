@@ -15,11 +15,8 @@
             title="会话列表（每个会话是一个 Being 的记忆）">会话</button>
     <div class="brand">Being</div>
   </div>
-  <div id="peer" hidden>
-    <img id="peer-avatar" alt="" hidden>
-    <span id="peer-fallback" class="avatar-fallback" hidden></span>
+  <div id="peer" hidden title="点名字看对方的名片">
     <span id="peer-name"></span>
-    <span id="peer-avatar-pending" hidden>头像画好了会自己出现</span>
   </div>
   <div class="top-right">
     <div id="conn" data-state="pending" title="冒烟调用成功即在线">
@@ -60,7 +57,7 @@
   <button id="send" type="button" disabled>发送</button>
 </div>
 
-<!-- 设置：底栏齿轮进（面板照旧浮在输入条上方）；改动自动保存。生图与识图都填，头像与发图片才生效 -->
+<!-- 设置：底栏齿轮进（面板照旧浮在输入条上方）；改动自动保存。识图填上，发照片才生效 -->
 <div id="settings-panel" hidden role="dialog" aria-modal="false" aria-label="设置">
   <div class="set-head">
     <h2>设置</h2>
@@ -89,27 +86,8 @@
     </section>
 
     <section class="set-sec">
-      <h3>生图</h3>
-      <label>接口地址 <input id="gen-endpoint" type="text" spellcheck="false"
-             placeholder="https://api.xxx.com/v1/images/generations"></label>
-      <label>密钥 <input id="gen-key" type="password" spellcheck="false"></label>
-      <label>模型名 <input id="gen-model" type="text" spellcheck="false"></label>
-      <label>尺寸 <input id="gen-size" type="text" spellcheck="false" placeholder="1024x1024"></label>
-    </section>
-
-    <section class="set-sec">
       <h3>我的资料</h3>
-      <div class="me-top">
-        <img id="me-avatar-preview" alt="" hidden>
-        <span id="me-avatar-fallback" class="avatar-fallback" hidden></span>
-        <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
-      </div>
-      <div class="set-row" id="me-avatar-actions">
-        <button id="me-avatar-pick" type="button">换头像</button>
-        <button id="me-avatar-clear" type="button" class="ghost">移除</button>
-        <input type="file" id="me-avatar-input" accept="image/jpeg,image/png,image/webp" hidden>
-      </div>
-      <div id="me-avatar-hint" class="set-hint"></div>
+      <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
     </section>
   </div>
   <div class="set-foot">
@@ -117,37 +95,17 @@
   </div>
 </div>
 
-<!-- 模态框：点 AI 头像弹「对方名片」；换头像选完图弹「截取头像」。点遮罩或 Esc 关闭 -->
+<!-- 模态框：点顶栏的名字弹「对方名片」。点遮罩或 Esc 关闭 -->
 <div id="modal-overlay" hidden>
   <div id="card-modal" class="modal-box" hidden role="dialog" aria-modal="true" aria-labelledby="card-name">
     <button class="modal-close" data-close type="button" aria-label="关闭名片">&times;</button>
     <div class="card-head">
-      <img id="card-avatar" alt="" hidden>
-      <span id="card-fallback" class="avatar-fallback" hidden></span>
       <div>
         <div id="card-name"></div>
         <div id="card-identity"></div>
       </div>
     </div>
     <dl id="card-rows"></dl>
-    <div id="card-pending" class="set-hint" hidden>头像还在画，画好了会自己出现</div>
-  </div>
-
-  <div id="crop-modal" class="modal-box" hidden role="dialog" aria-modal="true" aria-label="截取头像">
-    <button class="modal-close" data-close type="button" aria-label="关闭截取">&times;</button>
-    <h3>截取头像</h3>
-    <div id="crop-frame">
-      <canvas id="crop-canvas" width="280" height="280"></canvas>
-    </div>
-    <div class="crop-slider">
-      <span aria-hidden="true">&minus;</span>
-      <input type="range" id="crop-zoom" min="50" max="300" value="100" aria-label="缩放">
-      <span aria-hidden="true">+</span>
-    </div>
-    <div class="crop-actions">
-      <button id="crop-cancel" type="button">取消</button>
-      <button id="crop-ok" type="button">确认</button>
-    </div>
   </div>
 </div>
 

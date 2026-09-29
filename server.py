@@ -32,7 +32,7 @@ WEB = ROOT / "web"
 CONFIG_PATH = ROOT / "config.json"
 PROMPT_PATH = ROOT / "prompt.txt"
 SESSION_DIR = ROOT / "sessions"           # 一个会话 = 一个 Being 的记忆，一个 JSON
-MEDIA_DIR = ROOT / "media"                # 照片与头像（会话删除时连它自己的子目录一起删）
+MEDIA_DIR = ROOT / "media"                # 聊天里的照片（会话删除时连它自己的子目录一起删）
 LEGACY_MESSAGES = ROOT / "messages.json"  # 单会话时代的存档，首次启动搬进 sessions/
 
 EMMM = "<<emmm>>"
@@ -40,7 +40,6 @@ HISTORY_WINDOW = 40  # 发给模型的历史条数上限（系统提示词不算
 PROBE_TIMEOUT = 15.0
 TURN_TIMEOUT = 120.0
 VISION_TIMEOUT = 60.0   # 识图转述一次的上限
-IMAGEGEN_TIMEOUT = 90.0  # 生一张图的上限（卡在 TURN_TIMEOUT 之内）
 MAX_TOOL_ROUNDS = 4  # 一条回复里最多允许几次"调工具再接着说"
 MAX_IMAGE_BYTES = 8 * 1024 * 1024  # 一张照片的上限（浏览器端已压过，这里兜底）
 _KEY_MASK = "••••••••"  # 设置面板显示密钥用；提交回来等于它就表示"不改"
@@ -63,11 +62,10 @@ _DEFAULTS = {
     "probe_interval": 60,
     # 延迟 = (base + per_char * 字数) ± jitter，再夹在 [min, max]
     "delay": {"base": 1.2, "per_char": 0.13, "min": 1.5, "max": 20.0, "jitter": 0.15},
-    # 识图 / 生图：两者都填齐，昵称与发图片才生效（公平规则）
+    # 识图：填齐了「发照片」才生效（这个分支没有生图，也没有头像）
     "vision": {"endpoint": "", "api_key": "", "model": ""},
-    "imagegen": {"endpoint": "", "api_key": "", "model": "", "size": "1024x1024"},
-    # 我的资料：昵称 + 头像（头像是 media/ 下的文件名，描述由识图模型算一次缓存）
-    "me": {"nickname": "", "avatar": "", "avatar_desc": ""},
+    # 我的资料：只有一个昵称（纯文本，进它的提示词）
+    "me": {"nickname": ""},
 }
 
 
@@ -97,7 +95,7 @@ def _load_config() -> dict:
     if isinstance(raw.get("delay"), dict):
         delay.update(raw["delay"])
     cfg["delay"] = delay
-    for key in ("vision", "imagegen", "me"):
+    for key in ("vision", "me"):
         cfg[key] = _section(raw, key)
     return cfg
 
@@ -112,35 +110,25 @@ pending: dict[str, asyncio.Task] = {}  # 每个会话在飞的那一轮：**多�
 unread: dict[str, int] = {}  # sid -> 不在当前会话时收到的条数（只在内存里，不落盘）
 turn_seq = 0  # 轮次号：被打断的旧轮 turn_end 会被前端按号忽略
 vision_state: dict = {"known": None, "detail": ""}  # 最近一次识图探测的结果（前端展示用）
-pending_avatars: set[str] = set()  # 头像在生成中的会话 id（首句不等它，画好再推）
 
 
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def missing_features() -> list[str]:
-    """公平规则还缺哪几段：识图与生图都要求 endpoint 和 model 都非空。"""
-    miss = []
-    if not (cfg["vision"]["endpoint"] and cfg["vision"]["model"]):
-        miss.append("识图")
-    if not (cfg["imagegen"]["endpoint"] and cfg["imagegen"]["model"]):
-        miss.append("生图")
-    return miss
+def photos_enabled() -> bool:
+    """这个分支只剩「识图」一道门：那一段填齐了，照片按钮才出现、照片才送得出去。
 
-
-def features_enabled() -> bool:
-    """公平规则：生图与识图必须**同时**填齐，昵称与发图片功能才生效。"""
-    return not missing_features()
-
-
-def gate_error(what: str) -> str:
-    """门禁拦下时的原话 —— 必须点名缺哪一段，否则用户不知道去填什么。
-
-    只有**头像**和**发图片**才真用得上生图/识图：AI 的头像靠生图、
-    看你的头像与照片靠识图、AI 发照片靠生图。昵称是纯文本，不受这个门管。
+    填一半的识图端点等于没填 —— 所以 endpoint 与 model 都要求非空。
+    昵称是纯文本，不归这道门管。
     """
-    return f"生图与识图都要填，{what}才生效；现在还差：{'、'.join(missing_features())}"
+    v = cfg["vision"]
+    return bool(v["endpoint"] and v["model"])
+
+
+def gate_error() -> str:
+    """门禁拦下时的原话 —— 直接说清去哪儿填什么。"""
+    return "识图还没填：设置里补上识图的接口地址和模型名，发照片才用得了"
 
 
 def _same_vision_as_chat() -> bool:
@@ -202,7 +190,7 @@ def _clean_messages(raw) -> list[dict]:
 def title_from(sess: dict) -> str:
     """标题 = 有昵称就用昵称（一个会话 = 一个 Being），否则首条人话，最多 50 字。
 
-    昵称是纯文本，不归生图/识图那道门管 —— 门只拦头像与发图片。
+    昵称是纯文本，谁都不拦它 —— 填了就生效。
     """
     if sess.get("persona", {}).get("nickname"):
         return str(sess["persona"]["nickname"])[:50]
@@ -345,8 +333,7 @@ def session_list() -> list[dict]:
     out: list[dict] = []
     for s in sorted(sessions.values(), key=lambda s: (s["updated"], s["id"]), reverse=True):
         task = pending.get(s["id"])
-        # 改过名的用原名；没改过的走 title_from —— 它自己会按 features 决定
-        # 用昵称还是首条人话，功能关掉时不许把昵称从列表里露出来
+        # 改过名的用原名；没改过的走 title_from（有昵称就用昵称，没有取首条人话）
         title = s["title"] if s.get("renamed") else title_from(s)
         out.append(
             {
@@ -398,14 +385,13 @@ def build_llm_messages(system_prompt: str, sess: dict) -> list[dict]:
     """窗口内历史 -> chat 格式。插话后会出现两条相邻 human，合并成一条发。
 
     照片两条路（Q2 的决定）：识图端点 == 聊天端点时把图片直传给模型；
-    是另一个模型时，历史里只留它转述过的文字（img_desc）。AI 自己发的照片
-    一律走文字 —— 大多数端点不收 assistant 侧的 image_url。
+    是另一个模型时，历史里只留它转述过的文字（img_desc）。
     """
     hist = sess["messages"][-HISTORY_WINDOW:]
     while hist and hist[0]["role"] == "ai":  # 别让对话以 AI 开头
         hist = hist[1:]
     out: list[dict] = [{"role": "system", "content": system_prompt}]
-    direct = _same_vision_as_chat() and features_enabled()
+    direct = _same_vision_as_chat() and photos_enabled()
     for m in hist:
         role = "user" if m["role"] == "human" else "assistant"
         text = _msg_text(m)
@@ -473,110 +459,23 @@ TOOLS = [
 ]
 
 
-def _send_photo_tool(sess: dict):
-    """给这个会话配一把「发照片」的工具 —— 生图与识图填齐才有（公平规则）。"""
-
-    async def impl(prompt: str) -> str:
-        rel = await generate_image(str(prompt or ""))
-        if not rel:
-            return "（照片没发出去：生图那边失败了，如实跟对方说你发不了，别假装发过）"
-        emit_ai_image(sess, rel, str(prompt or ""))
-        return "（照片已经发出去了，对方能看到。接下来照常接着说话，别再提发照片这件事）"
-
-    return {
-        "name": "send_photo",
-        "description": (
-            "给对方发一张照片（只能是照片，不是文件）。想给对方看你那边的东西、"
-            "自拍、你拍的风景、你手边的物件时调用，参数是对这张照片的描述——"
-            "写清画面里有什么，但要像人在描述自己拍的照片，别写成商品详情。"
-            "真人不会随手天天发图，一两句话聊到兴头上再发，别滥用。"
-        ),
-        "impl": impl,
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "prompt": {
-                    "type": "string",
-                    "description": "这张照片的画面描述（谁/什么/在哪儿/什么光，口语一点）",
-                }
-            },
-            "required": ["prompt"],
-        },
-    }
-
-
-def _view_avatar_tool():
-    """看一眼对方的头像 —— 返回真图 data URI，由 call_llm 紧跟工具结果注入上下文。"""
-
-    async def impl() -> tuple[str, str | None]:
-        name = str(cfg["me"].get("avatar") or "")
-        path = MEDIA_DIR / name if name else None
-        if not path or not path.is_file():
-            return ("（对方还没有设置头像，看不到图 —— 如实告诉对方你现在看不到ta的头像）", None)
-        raw = path.read_bytes()
-        ext = sniff_image(raw)
-        if ext not in ("jpg", "png", "webp"):
-            return ("（对方的头像文件读不出来，看不到图）", None)
-        mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[ext]
-        uri = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
-        return (
-            "（对方现在的头像原图已经放在下面给你看了 —— 照着画面里真实的样子回应；"
-            "提示词里那句文字描述可能过时或不全，以图为准）",
-            uri,
-        )
-
-    return {
-        "name": "view_user_avatar",
-        "description": (
-            "看一眼对方（正在和你聊天的人）现在的头像，拿到的是真图、不是文字描述。"
-            "什么时候用：对方提到自己的头像、问你看到的是什么样、刚换了头像，或你想确认"
-            "头像里的具体细节时。看完照着画面自然地说，别念参数，别跟对方提工具。"
-        ),
-        "impl": impl,
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    }
-
-
-def active_tools(sess: dict | None) -> list[dict]:
-    """这个会话这一轮能用的工具：生图与识图填齐才多出 send_photo；
-    看头像真图还要求识图与聊天是同一套模型 —— 不是同一套的话，图片发过去聊天模型吃不下。"""
-    tools = list(TOOLS)
-    if sess is not None and features_enabled():
-        tools.append(_send_photo_tool(sess))
-        if _same_vision_as_chat():
-            tools.append(_view_avatar_tool())
-    return tools
-
-
-async def run_tool(call: dict, sess: dict | None = None) -> tuple[str, str | None]:
-    """跑一次工具调用。返回 (给模型的文字, 顺带要塞进上下文的图片 data URI 或 None)。
-    工具自己出问题不该炸掉整轮：如实告诉模型。"""
+async def run_tool(call: dict) -> str:
+    """跑一次工具调用。工具自己出问题不该炸掉整轮：如实告诉模型。"""
     fn = call.get("function") or {}
     name = str(fn.get("name") or "")
-    args = fn.get("arguments")
-    if isinstance(args, str):
-        try:
-            args = json.loads(args)
-        except json.JSONDecodeError:
-            args = {}
-    for tool in active_tools(sess):
+    for tool in TOOLS:
         if tool["name"] == name:
             try:
-                if name == "send_photo":
-                    res = tool["impl"](str((args or {}).get("prompt") or ""))
-                else:
-                    res = tool["impl"]()
+                res = tool["impl"]()
                 if asyncio.iscoroutine(res):
                     res = await res
-                if isinstance(res, tuple):
-                    return str(res[0]), (str(res[1]) if len(res) > 1 and res[1] else None)
-                return str(res), None
+                return str(res)
             except Exception as exc:  # noqa: BLE001 - 工具是外挂的，什么都可能抛
-                return f"（{name} 没能取到结果：{exc}）", None
-    return f"（没有叫 {name} 的工具）", None
+                return f"（{name} 没能取到结果：{exc}）"
+    return f"（没有叫 {name} 的工具）"
 
 
-def tool_specs(sess: dict | None = None) -> list[dict]:
+def tool_specs() -> list[dict]:
     return [
         {
             "type": "function",
@@ -586,17 +485,13 @@ def tool_specs(sess: dict | None = None) -> list[dict]:
                 "parameters": tool["parameters"],
             },
         }
-        for tool in active_tools(sess)
+        for tool in TOOLS
     ]
 
 
-def tools_block(sess: dict | None = None) -> str:
+def tools_block() -> str:
     """把工具表讲给模型听 —— 工具不是它天生就会的事，得说明白什么时候用。"""
-    lines = "\n".join(
-        f"- {tool['name']}：{tool['description']}" for tool in active_tools(sess)
-    )
-    if not lines:
-        return ""
+    lines = "\n".join(f"- {tool['name']}：{tool['description']}" for tool in TOOLS)
     return (
         "【工具】下面这些工具你自己就能用，对方看不到调用过程：把它返回的内容当成你刚看到的事实，"
         "直接说就行。要说这类事之前先用工具看一眼，不许凭印象猜。"
@@ -614,8 +509,6 @@ def persona_block(sess: dict) -> str:
                        ("origin", "来自哪里"), ("hobbies", "爱好"), ("traits", "特点")):
         if p.get(key):
             lines.append(f"- {label}：{p[key]}")
-    if p.get("avatar"):
-        lines.append("- 你的头像：你们看到的就是你选的那张图，别再描述它")
     return (
         "\n\n【你给自己立的人设（第一句话之后定下来的，整段对话都作数，"
         "不许中途改名、改年龄、改来历）】\n"
@@ -626,16 +519,11 @@ def persona_block(sess: dict) -> str:
 
 
 def me_block() -> str:
-    """AI 看到的对方：昵称随时注入；头像描述要有识图才算得出来（缓存在配置里）。"""
-    me = cfg["me"]
-    lines = []
-    if me.get("nickname"):
-        lines.append(f"- 对方的昵称：{me['nickname']}")
-    if me.get("avatar_desc"):
-        lines.append(f"- 对方的头像：{me['avatar_desc']}")
-    if not lines:
+    """AI 看到的对方：只有一个昵称（对方在设置里填的，纯文本）。"""
+    nick = str(cfg["me"].get("nickname") or "")
+    if not nick:
         return ""
-    return "\n\n【对方的资料（对方自己填的，仅你可见）】\n" + "\n".join(lines)
+    return "\n\n【对方的资料（对方自己填的，仅你可见）】\n" + f"- 对方的昵称：{nick}"
 
 
 def system_content(sess: dict | None = None) -> str:
@@ -645,7 +533,7 @@ def system_content(sess: dict | None = None) -> str:
     if sess is not None:
         base += persona_block(sess)
     base += me_block()
-    tail = tools_block(sess)
+    tail = tools_block()
     return base + ("\n\n" + tail if tail else "")
 
 
@@ -660,7 +548,7 @@ async def call_llm(sess: dict) -> str:
                 "messages": convo,
                 "max_tokens": 1024,
                 "stream": False,
-                "tools": tool_specs(sess),
+                "tools": tool_specs(),
             }
             r = await client.post(cfg["endpoint"], json=payload, headers=_auth_headers())
             r.raise_for_status()
@@ -677,36 +565,17 @@ async def call_llm(sess: dict) -> str:
                 {"role": "assistant", "content": msg.get("content") or None, "tool_calls": calls}
             )
             for call in calls:
-                text, image_uri = await run_tool(call, sess)
                 convo.append(
                     {
                         "role": "tool",
                         "tool_call_id": str(call.get("id") or ""),
-                        "content": text,
+                        "content": await run_tool(call),
                     }
                 )
-                if image_uri:
-                    # OpenAI 规范里 tool 消息只吃字符串，图片走紧随其后的一条注入消息 ——
-                    # 用的都是本项目已验证过的形状（字符串工具结果 + user 消息里的 image_url）。
-                    # 只活在这次生成的临时上下文里，不进对话存档。
-                    convo.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text",
-                                 "text": "【工具取回的画面】上面那次调用拿回来的就是这张图。"
-                                         "照着图里真实的样子往下接话，别拿文字描述代替看图。"},
-                                {"type": "image_url", "image_url": {"url": image_uri}},
-                            ],
-                        }
-                    )
     raise RuntimeError(f"tool rounds exhausted ({MAX_TOOL_ROUNDS})")
 
 
-# ---------- 照片：生图 / 识图 ----------
-
-_IMG_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
-
+# ---------- 照片：识图 ----------
 
 def sniff_image(raw: bytes) -> str:
     """magic bytes 认图，认不出就返回空串（照片只认照片，不看扩展名）。"""
@@ -726,51 +595,6 @@ def save_image_bytes(name: str, raw: bytes) -> str:
     path = MEDIA_DIR / name
     path.write_bytes(raw)
     return name
-
-
-async def generate_image(prompt: str, size: str | None = None) -> str | None:
-    """调生图模型出一张图，落盘后返回相对路径；失败返回 None（调用方如实回报）。"""
-    g = cfg["imagegen"]
-    if not (g["endpoint"] and g["model"]):
-        return None
-    payload = {
-        "model": g["model"],
-        "prompt": prompt,
-        "n": 1,
-        "size": size or g.get("size") or "1024x1024",
-        "response_format": "b64_json",
-    }
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGEGEN_TIMEOUT, connect=10.0)) as client:
-            r = await client.post(g["endpoint"], json=payload, headers=_auth_headers(g))
-            r.raise_for_status()
-            data = r.json()
-    except Exception as exc:  # noqa: BLE001 - 生图是外挂的，失败要能落到返回值上
-        print(f"[imagegen] failed: {exc}", flush=True)
-        return None
-    items = data.get("data") or []
-    if not items:
-        print(f"[imagegen] no data: {str(data)[:200]}", flush=True)
-        return None
-    item = items[0]
-    if item.get("b64_json"):
-        try:
-            raw = base64.b64decode(str(item["b64_json"]))
-        except (binascii.Error, ValueError):
-            return None
-    elif item.get("url"):  # 有的端点只给链接，不认 response_format
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(IMAGEGEN_TIMEOUT, connect=10.0)) as client:
-                ir = await client.get(str(item["url"]))
-                ir.raise_for_status()
-                raw = ir.content
-        except Exception as exc:  # noqa: BLE001
-            print(f"[imagegen] download failed: {exc}", flush=True)
-            return None
-    else:
-        return None
-    ext = sniff_image(raw) or "png"
-    return save_image_bytes(media_name("gen", ext), raw)
 
 
 async def describe_image(rel: str) -> str:
@@ -809,31 +633,12 @@ async def describe_image(rel: str) -> str:
 
 async def describe_photos(sess: dict) -> None:
     """异模型分支：缺描述的照片逐张补上；描述算一次就存回消息，下轮不再花这个钱。"""
-    if not features_enabled() or _same_vision_as_chat():
+    if not photos_enabled() or _same_vision_as_chat():
         return
     for m in sess["messages"]:
         if m.get("image") and not m.get("img_desc"):
             m["img_desc"] = await describe_image(m["image"])
             touch(sess)
-
-
-def emit_ai_image(sess: dict, rel: str, alt: str) -> None:
-    """把 AI 发的照片推上屏并写进记忆 —— 与文字气泡同一套去重、未读、并行规则。"""
-    msg = {
-        "id": len(sess["messages"]),
-        "role": "ai",
-        "text": "",
-        "ts": time.time(),
-        "image": rel,
-        "img_desc": alt,
-    }
-    sess["messages"].append(msg)
-    touch(sess)
-    if sess["id"] == current_id:
-        broadcast({"type": "message", "message": msg, "sessions": session_list()})
-    else:
-        unread[sess["id"]] = unread.get(sess["id"], 0) + 1
-        broadcast({"type": "sessions", "sessions": session_list()})
 
 
 # ---------- 人设：第一句话之后它自己立 ----------
@@ -843,17 +648,12 @@ _PERSONA_SYSTEM = (
     "只输出一个 JSON 对象，不要任何解释、不要代码块。\n"
     "字段：nickname(昵称，像真人的网名或小名，10字以内)、identity(身份/职业或在读年级)、"
     "age(年龄，与身份相符的数字)、gender(性别)、origin(来自哪里，城市或地区)、"
-    "hobbies(爱好，一两个具体的)、traits(性格特点，一两个)、"
-    "avatar_prompt(给自己的头像写的生图提示词)。\n"
+    "hobbies(爱好，一两个具体的)、traits(性格特点，一两个)。\n"
     "硬要求：\n"
     "1. **性别由程序指派，已经定了：{GENDER}。** 这一项你只能照抄，不许自己挑、不许写别的；"
-    "整套底细（昵称、身份、来自哪里、爱好、说话口吻、头像）都要围着它展开。\n"
-    "2. age 必须决定头像风格——25 岁以下偏动漫、二次元、卡通猫狗；"
-    "40 岁以上偏风景、花草、静物特写、或像自拍的真人照。"
-    "头像里的人物性别必须和指派的这一项一致。\n"
-    "3. 头像提示词里不许出现任何真实名人姓名，不许写文字/logo，要适合做头像的构图。\n"
-    "4. 这套底细要前后自洽、经得起追问：学生就该有学生的作息和烦恼，别写成百科全书。\n"
-    "5. 昵称要自然，别用明显是 AI 或品牌的名字。"
+    "整套底细（昵称、身份、来自哪里、爱好、说话口吻）都要围着它展开。\n"
+    "2. 这套底细要前后自洽、经得起追问：学生就该有学生的作息和烦恼，别写成百科全书。\n"
+    "3. 昵称要自然，别用明显是 AI 或品牌的名字。"
 )
 
 
@@ -914,34 +714,15 @@ async def gen_persona(retries: int = 3) -> dict | None:
         # 性别一律以指派的为准 —— 模型就算自作主张写了个别的，也在这里被盖掉
         data["gender"] = gender
         return {k: str(data.get(k) or "").strip()[:200] for k in
-                ("nickname", "identity", "age", "gender", "origin", "hobbies", "traits",
-                 "avatar_prompt")}
+                ("nickname", "identity", "age", "gender", "origin", "hobbies", "traits")}
     print("[persona] gave up after retries", flush=True)
     return None
 
 
-async def gen_avatar(sess: dict, prompt: str) -> None:
-    """给这个人设画张头像。首句不等它 —— 画好了再整页推一次。"""
-    sid = sess["id"]
-    try:
-        rel = await generate_image(
-            f"头像，正方形构图，适合社交媒体个人资料图：{prompt}。不要文字，不要水印，不要边框。"
-        )
-    finally:
-        pending_avatars.discard(sid)
-    if not rel or sessions.get(sid) is not sess:
-        broadcast({"type": "persona", "sid": sid, "persona": sess.get("persona")})
-        return
-    sess["persona"]["avatar"] = rel
-    touch(sess)
-    broadcast({"type": "persona", "sid": sid, "persona": sess.get("persona")})
-
-
 async def ensure_persona(sess: dict) -> bool:
-    """第一句话之后：先给自己立人设（昵称/身份/年龄…），头像在后台画。返回是否刚立。
+    """第一句话之后：先给自己立人设（昵称/身份/年龄…）。返回是否刚立。
 
-    立人设用的是纯文本模型，不归生图/识图那道门管；头像那一半要生图，
-    没填就画不出来 —— 人设照立，只是暂时没有头像。
+    立人设走的是纯文本模型，和识图那道门无关 —— 识图没填也照样立。
     """
     if sess.get("persona"):
         return False
@@ -955,10 +736,6 @@ async def ensure_persona(sess: dict) -> bool:
     if sess["title"] and not sess.get("renamed"):
         sess["title"] = title_from(sess)
     broadcast({"type": "persona", "sid": sess["id"], "persona": persona})
-    g = cfg["imagegen"]
-    if persona.get("avatar_prompt") and g["endpoint"] and g["model"]:
-        pending_avatars.add(sess["id"])
-        asyncio.create_task(gen_avatar(sess, persona["avatar_prompt"]))
     return True
 
 
@@ -1034,7 +811,7 @@ async def ai_turn(turn: int, sid: str) -> None:
     broadcast({"type": "sessions", "sessions": session_list()})  # 列表上这一行立刻显示在打字
     try:
         try:
-            await ensure_persona(sess)  # 第一句话之后：先给自己立人设（头像在后台画）
+            await ensure_persona(sess)  # 第一句话之后：先给自己立人设
             content = await call_llm(sess)
             if EMMM in content:
                 return  # 守卫：AI 不想回，整条丢弃，不上屏也不入历史
@@ -1115,8 +892,8 @@ async def api_send(payload: dict) -> dict:
 
     msg: dict = {"id": 0, "role": "human", "text": text, "ts": time.time()}
     if image_b64:
-        if not features_enabled():
-            return {"ok": False, "error": gate_error("发图片")}  # 公平规则
+        if not photos_enabled():
+            return {"ok": False, "error": gate_error()}  # 识图没填，照片送不出去
         raw, err = _decode_data_url(image_b64)
         if raw is None:
             return {"ok": False, "error": err or "图片读不出来"}
@@ -1176,12 +953,8 @@ def state_payload() -> dict:
         "sessions": session_list(),
         "messages": list(sess["messages"]),
         "persona": sess.get("persona") or {},
-        "features": features_enabled(),
-        "me": {
-            "nickname": cfg["me"].get("nickname", ""),
-            "avatar": cfg["me"].get("avatar", ""),
-        },
-        "avatar_pending": sorted(pending_avatars),
+        "photos": photos_enabled(),
+        "me": {"nickname": cfg["me"].get("nickname", "")},
     }
 
 
@@ -1238,7 +1011,7 @@ async def api_delete_session(payload: dict) -> dict:
     cancel_turn(sid)
     unread.pop(sid, None)
     sess = sessions.pop(sid)
-    _drop_media(sess, keep_persona=False)  # 人没了，照片和头像也一起走
+    _drop_media(sess)  # 人没了，它的照片也一起走
     try:
         _sid_path(sid).unlink(missing_ok=True)
     except OSError as exc:
@@ -1253,33 +1026,26 @@ async def api_delete_session(payload: dict) -> dict:
 
 @app.post("/api/clear")
 async def api_clear() -> dict:
-    """清空这个 Being 的记忆（对所有标签页生效）。名字、人设、头像留着 —— 拿走的是记忆，不是它。
+    """清空这个 Being 的记忆（对所有标签页生效）。名字、人设留着 —— 拿走的是记忆，不是它。
     在飞的那一轮必须一起作废，否则它排好队的气泡会飘进刚清干净的会话里。"""
     sess = cur()
     cancel_turn(sess["id"])
     unread.pop(sess["id"], None)
-    _drop_media(sess, keep_persona=True)  # 照片是记忆的一部分，跟着走；头像不是
+    _drop_media(sess)  # 照片是记忆的一部分，跟着走
     sess["messages"].clear()
     touch(sess)  # 没被改过名的会话，标题退回「新的会话」（有昵称的留昵称）
     broadcast_state()
     return {"ok": True}
 
 
-def _drop_media(sess: dict, keep_persona: bool) -> None:
-    """删掉这个会话消息里的照片文件；keep_persona 决定头像留不留。"""
+def _drop_media(sess: dict) -> None:
+    """删掉这个会话消息里的照片文件。"""
     for m in sess["messages"]:
         if m.get("image"):
             try:
                 (MEDIA_DIR / m["image"]).unlink(missing_ok=True)
             except OSError as exc:
                 print(f"[media] delete failed: {exc}", flush=True)
-    if not keep_persona:
-        avatar = (sess.get("persona") or {}).get("avatar")
-        if avatar:
-            try:
-                (MEDIA_DIR / avatar).unlink(missing_ok=True)
-            except OSError as exc:
-                print(f"[media] delete avatar failed: {exc}", flush=True)
 
 
 # ---------- 设置面板：读 / 写配置，改完自动探一次识图 ----------
@@ -1300,14 +1066,8 @@ def config_payload() -> dict:
         "probe_interval": cfg["probe_interval"],
         "delay": cfg["delay"],
         "vision": _mask(cfg["vision"]),
-        "imagegen": _mask(cfg["imagegen"]),
-        "me": {
-            "nickname": cfg["me"].get("nickname", ""),
-            "avatar": cfg["me"].get("avatar", ""),
-            "avatar_desc": cfg["me"].get("avatar_desc", ""),
-        },
-        "features": features_enabled(),
-        "missing": missing_features(),  # 面板靠它点名还差哪一段
+        "me": {"nickname": cfg["me"].get("nickname", "")},
+        "photos": photos_enabled(),
         "vision_state": vision_state,
         "same_vision": _same_vision_as_chat(),
     }
@@ -1386,7 +1146,7 @@ async def api_config_put(payload: dict) -> dict:
                 cfg[key] = val.strip() if key != "api_key" else val.strip()
                 if key in ("endpoint", "model", "api_key"):
                     changed_chat = True
-    for sec_name in ("vision", "imagegen"):
+    for sec_name in ("vision",):
         got = payload.get(sec_name)
         if isinstance(got, dict):
             for key, val in got.items():
@@ -1397,13 +1157,8 @@ async def api_config_put(payload: dict) -> dict:
                     continue
                 cfg[sec_name][key] = val.strip()
     me = payload.get("me")
-    if isinstance(me, dict):
-        if "nickname" in me:
-            cfg["me"]["nickname"] = " ".join(str(me.get("nickname") or "").split())[:20]
-        if "avatar" in me and str(me.get("avatar") or "") in ("", cfg["me"]["avatar"]):
-            cfg["me"]["avatar"] = str(me.get("avatar") or "")
-            if not cfg["me"]["avatar"]:
-                cfg["me"]["avatar_desc"] = ""  # 头像被拿掉，描述也作废
+    if isinstance(me, dict) and "nickname" in me:
+        cfg["me"]["nickname"] = " ".join(str(me.get("nickname") or "").split())[:20]
     if payload.get("port"):
         try:
             cfg["port"] = max(1, min(65535, int(payload["port"])))
@@ -1419,87 +1174,9 @@ async def api_config_put(payload: dict) -> dict:
     return {"ok": True, "config": config_payload()}
 
 
-_bg_tasks: set[asyncio.Task] = set()
-
-
-def _spawn(coro) -> None:
-    """后台任务：存个引用，免得任务对象跑到一半被垃圾回收凭空消失。"""
-    task = asyncio.create_task(coro)
-    _bg_tasks.add(task)
-    task.add_done_callback(_bg_tasks.discard)
-
-
-async def _describe_me_avatar(name: str) -> None:
-    """给刚传的头像算描述 —— **异步补，不卡上传**。识图偶发失败隔 3 秒重试（共三次尝试）——
-    描述丢了没有别的地方会再补，值得多试几次；头像这期间被换掉/移除就放弃。"""
-    if cfg["me"].get("avatar") != name:
-        return
-    print(f"[avatar] describe start: {name}", flush=True)
-    desc = ""
-    for attempt in range(3):
-        if attempt:
-            if cfg["me"].get("avatar") != name:
-                return
-            print(f"[avatar] describe retry {attempt}: {name}", flush=True)
-            await asyncio.sleep(3)
-        desc = await describe_image(name)
-        if desc:
-            break
-    if cfg["me"].get("avatar") != name:
-        print(f"[avatar] describe stale, dropped: {name}", flush=True)
-        return
-    cfg["me"]["avatar_desc"] = desc
-    save_config()
-    broadcast_state()
-    print(f"[avatar] describe {'done' if desc else 'EMPTY'}: {name}", flush=True)
-
-
-@app.post("/api/me/avatar")
-async def api_me_avatar(payload: dict) -> dict:
-    """传我的头像（只收照片）。识图与生图都填了才存 —— 与昵称同一个开关。
-    image 为空表示「移除头像」，不是坏图。"""
-    if not features_enabled():
-        return {"ok": False, "error": gate_error("头像")}
-    data = str(payload.get("image") or "").strip()
-    old = cfg["me"].get("avatar")
-    if not data:
-        cfg["me"]["avatar"] = ""
-        cfg["me"]["avatar_desc"] = ""
-        save_config()
-        if old:
-            try:
-                (MEDIA_DIR / old).unlink(missing_ok=True)
-            except OSError:
-                pass
-        broadcast_state()
-        return {"ok": True, "config": config_payload()}
-    raw, err = _decode_data_url(data)
-    if raw is None:
-        return {"ok": False, "error": err or "图片读不出来"}
-    ext = sniff_image(raw)
-    if ext not in ("jpg", "png", "webp"):
-        # gif 动图识图模型吃不下；扩展名之外的类型一并挡掉（magic bytes 说了算。
-        # 注意 sniff_image 对 jpeg 回的是 "jpg" —— 写 "jpeg" 会把所有 jpg 都挡死）
-        return {"ok": False, "error": "头像只收 jpg/png/webp（gif 等格式 AI 识不了）"}
-    if len(raw) > 2 * 1024 * 1024:
-        return {"ok": False, "error": "头像压到 2MB 以内"}
-    name = save_image_bytes(media_name("me", ext), raw)
-    cfg["me"]["avatar"] = name
-    cfg["me"]["avatar_desc"] = ""  # 描述后台补：上传只管存盘，不替用户等识图
-    save_config()
-    if old and old != name:
-        try:
-            (MEDIA_DIR / old).unlink(missing_ok=True)
-        except OSError:
-            pass
-    broadcast_state()
-    _spawn(_describe_me_avatar(name))  # 算完会再广播一次，AI 下一轮之前看得到就行
-    return {"ok": True, "config": config_payload()}
-
-
 @app.post("/api/media/open")
 async def api_media_open(payload: dict) -> dict:
-    """名片里点头像 → 用系统默认程序打开原图。Being 就跑在本机、文件就在 media/，
+    """点消息里的照片 → 用系统默认程序打开原图。Being 就跑在本机、文件就在 media/，
     直接 startfile 交给系统默认看图程序。只认 media/ 下的纯文件名 ——
     basename 挡路径穿越，magic bytes 挡「随便指个文件就打开」。"""
     name = str(payload.get("file") or "")
