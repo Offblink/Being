@@ -440,13 +440,31 @@ def _clock() -> str:
     return f"{now:%Y-%m-%d} 星期{_WEEKDAYS[now.weekday()]} {now:%H:%M}（{part}）"
 
 
+def _now_line() -> str:
+    """当前时间直接写进提示词。
+
+    工具有（look_at_clock），但它经常不调 —— 实测中午 12:51 跟人说“这么晚了还在线，
+    也睡不着？”，被点破才改口“大中午的”。时间这种东西每轮都在变、又一定用得上，
+    与其指望它主动调工具，不如每轮直接塞进上下文（system_content 每次调用都重算）。
+
+    但得跟它讲清楚这只是**这一轮**的快照：对话拖很久、隔一阵再回，时间已经往前走了，
+    提示词里那个数就过期了 —— 所以 look_at_clock 不撤，拿不准时用它核。
+    """
+    return (
+        f"【现在的时间】{_clock()}。"
+        "聊到几点、白天晚上、吃饭睡觉、这会儿在干嘛这类事，以它为准，别凭感觉猜。\n"
+        "注意这只是你这一轮说话时的时刻，每轮都会刷新一次；对话拖久了时间会往前走，"
+        "隔一阵再回来看它就不一定还准 —— 拿不准就调 look_at_clock 再核一遍，别拿旧时间当现在。"
+    )
+
+
 # 工具表：加一个工具就在这里加一条（描述里写清“什么时候该用”）。
 TOOLS = [
     {
         "name": "look_at_clock",
         "description": (
-            "看一眼现在真实的时间（日期、星期、几点几分）。对方问几点、几号、星期几，"
-            "或聊到“这么晚了”“几点了”“你平时几点睡”，或你自己想提到现在的时间时，先调用它。"
+            "再确认一次现在的时间（日期、星期、几点几分）。当前时间已经每轮写进你的提示词了，"
+            "一般不用调；只有对话拖了很久、你想再核对一遍时才用。"
         ),
         "impl": _clock,
         "parameters": {"type": "object", "properties": {}, "required": []},
@@ -582,8 +600,9 @@ def me_block() -> str:
 
 
 def system_content(sess: dict | None = None) -> str:
-    """人设提示词 + 自己的人设 + 对方的资料 + 工具说明。每次调用重算。"""
+    """人设提示词 + 现在的时间 + 自己的人设 + 对方的资料 + 工具说明。每次调用重算。"""
     base = PROMPT_PATH.read_text(encoding="utf-8").rstrip()
+    base += "\n\n" + _now_line()
     if sess is not None:
         base += persona_block(sess)
     base += me_block()
