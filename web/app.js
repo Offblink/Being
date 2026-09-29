@@ -535,16 +535,17 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ---------- SSE ---------- */
-/* ---------- 顶栏：对方是谁（昵称 + 头像） ---------- */
+/* ---------- 顶栏：对方是谁（昵称随时显示；头像要生图才画得出来） ---------- */
 function renderPeer() {
-  const enabled = features;
-  const name = enabled ? (persona.nickname || '') : '';
-  const pending = enabled && avatarPending.includes(sessionCache.find((s) => s.current)?.id);
-  elPeer.hidden = !enabled;
-  document.querySelector('.brand').hidden = enabled;  // 有对方资料时让位
-  if (!enabled) return;
-  elPeerName.textContent = name || '（还没给自己起名字）';
-  const av = persona.avatar || '';
+  const name = persona.nickname || '';
+  const cur = (sessionCache.find((s) => s.current) || {}).id;
+  const pending = !!name && features && avatarPending.includes(cur);
+  elPeer.hidden = !name;
+  document.querySelector('.brand').hidden = !!name;  // 有对方名字时让位
+  if (!name) return;
+  elPeerName.textContent = name;
+  // 头像归生图/识图那道门管；门没开就退回昵称首字 —— 纯文字，不受门管
+  const av = features ? (persona.avatar || '') : '';
   elPeerAvatar.hidden = !av;
   elPeerFallback.hidden = !!av;
   elPeerPending.hidden = !pending;
@@ -552,7 +553,7 @@ function renderPeer() {
     elPeerAvatar.src = '/media/' + av;
     elPeerAvatar.onerror = () => { elPeerAvatar.hidden = true; elPeerFallback.hidden = false; };
   } else {
-    elPeerFallback.textContent = (name || '?').slice(0, 1);
+    elPeerFallback.textContent = name.slice(0, 1);
   }
   elPeer.title = persona.identity || '';
 }
@@ -663,19 +664,26 @@ function setPath(obj, path, val) {
   target[last] = val;
 }
 
-function fillSettings(cfg) {
+function fillSettings(cfg, opts = {}) {
   for (const [id, path] of SET_FIELDS) {
     const el = document.getElementById(id);
-    if (el) el.value = getPath(cfg, path) || '';
+    if (!el) continue;
+    // 自动保存的回包不能把用户正在打的字冲掉
+    if (opts.skipFocused && document.activeElement === el) continue;
+    el.value = getPath(cfg, path) || '';
   }
   const st = cfg.vision_state || {};
   const box = document.getElementById('detect-state');
   box.textContent = st.detail || '';
   box.dataset.known = st.known === true ? 'yes' : st.known === false ? 'no' : '';
-  document.getElementById('set-gate').hidden = !!cfg.features;
+  const gate = document.getElementById('set-gate');
+  gate.hidden = !!cfg.features;
+  const miss = cfg.missing || [];
+  document.getElementById('set-gate-missing').textContent =
+    miss.length ? `　现在还差：${miss.join('、')}` : '';
   renderMeAvatar(cfg.me || {});
-  document.getElementById('set-status').textContent =
-    cfg.features ? '昵称与发图片：已生效' : '昵称与发图片：未生效';
+  if (typeof cfg.features === 'boolean') features = !!cfg.features;
+  syncPhotoBtn();
 }
 
 function renderMeAvatar(me) {
@@ -709,10 +717,36 @@ function closeSettings() {
 
 btnSettings.addEventListener('click', () => (elSettings.hidden ? openSettings() : closeSettings()));
 document.getElementById('settings-close').addEventListener('click', closeSettings);
-document.getElementById('cfg-cancel').addEventListener('click', closeSettings);
 document.getElementById('cfg-detect').addEventListener('click', () => saveSettings(true));
 
+/* 改动自动保存 —— 面板里没有保存按钮，也没有第二个关闭按钮（顶上那个 × 就够了）。
+   停手 600ms 落一次盘；回车立刻落；探测可能拖到 15s，期间的改动排队补一次。 */
+let saveTimer = 0;
+let saveInFlight = false;
+let saveQueued = false;
+let queuedDetect = false;
+
+function statusSay(text, revert) {
+  const status = document.getElementById('set-status');
+  status.textContent = text;
+  if (revert) {
+    clearTimeout(status._t);
+    status._t = setTimeout(() => { status.textContent = '改完自动保存'; }, 2600);
+  }
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveSettings(false), 600);
+}
+
 async function saveSettings(forceDetect) {
+  if (saveInFlight) {           // 上一次还在路上：记下来，回来补一次
+    saveQueued = true;
+    queuedDetect = queuedDetect || !!forceDetect;
+    return;
+  }
+  saveInFlight = true;
   const body = { detect: !!forceDetect };
   for (const [id, path] of SET_FIELDS) {
     const el = document.getElementById(id);
@@ -720,8 +754,6 @@ async function saveSettings(forceDetect) {
   }
   const status = document.getElementById('set-status');
   status.textContent = '保存中…';
-  const save = document.getElementById('cfg-save');
-  save.disabled = true;
   try {
     const r = await fetch('/api/config', {
       method: 'POST',
@@ -730,19 +762,37 @@ async function saveSettings(forceDetect) {
     });
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || r.status);
-    fillSettings(data.config);
-    features = !!data.config.features;
-    syncPhotoBtn();
-    status.textContent = data.config.features ? '已保存 · 昵称与发图片已生效' : '已保存';
+    fillSettings(data.config, { skipFocused: true });
+    statusSay('已保存', true);
   } catch (e) {
     console.error('config save failed:', e);
-    status.textContent = '保存失败';
+    statusSay('保存失败，改完会再试', true);
+    scheduleSave();              // 失败别静默丢掉这次改动
   } finally {
-    save.disabled = false;
-    setTimeout(() => { if (status.textContent === '保存中…') status.textContent = ''; }, 4000);
+    saveInFlight = false;
+    if (saveQueued) {
+      saveQueued = false;
+      const d = queuedDetect;
+      queuedDetect = false;
+      saveSettings(d);
+    }
   }
 }
-document.getElementById('cfg-save').addEventListener('click', () => saveSettings(false));
+
+// 每个字段：停手自动存，回车立刻存
+for (const [id] of SET_FIELDS) {
+  const el = document.getElementById(id);
+  if (!el) continue;
+  el.addEventListener('input', scheduleSave);
+  el.addEventListener('change', scheduleSave);
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(saveTimer);
+      saveSettings(false);
+    }
+  });
+}
 
 /* 换头像：先在浏览器里压小，再交给后端存盘并算描述 */
 const meAvatarInput = document.getElementById('me-avatar-input');

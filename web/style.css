@@ -723,19 +723,26 @@ body {
 }
 .set-sec label input:focus { border-color: var(--accent); background: var(--surface); }
 
+/* 说明文字绝不能长得像输入框：输入框也是 --bg 灰底 + 9px 圆角 + 同样的内边距，
+   实测两者背景色一模一样（都是 rgb(244,244,245)），并排看就是个禁用控件。
+   改成淡青底 + 左侧强调条（走本仓引用条那套语言），一眼是说明不是输入。 */
 .set-note {
+  margin: 0.1rem 0 0.5rem;
   padding: 0.4rem 0.55rem;
-  border-radius: 9px;
-  background: var(--bg);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 9px 9px 0;
+  background: #f0f7f6;
   color: var(--text-2);
-  font-size: 0.74rem;
-  line-height: 1.5;
+  font-size: 0.73rem;
+  line-height: 1.55;
 }
 #set-gate {
-  margin-bottom: 0.5rem;
-  background: var(--danger-bg);
+  margin-bottom: 0.55rem;
   border: 1px solid var(--danger-border);
+  border-left: 3px solid var(--danger);
+  background: var(--danger-bg);
   color: var(--danger);
+  font-size: 0.74rem;
 }
 .set-hint { font-size: 0.72rem; color: var(--text-3); }
 #detect-state[data-known="yes"] { color: var(--online); }

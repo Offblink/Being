@@ -118,10 +118,28 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
+def missing_features() -> list[str]:
+    """公平规则还缺哪几段：识图与生图都要求 endpoint 和 model 都非空。"""
+    miss = []
+    if not (cfg["vision"]["endpoint"] and cfg["vision"]["model"]):
+        miss.append("识图")
+    if not (cfg["imagegen"]["endpoint"] and cfg["imagegen"]["model"]):
+        miss.append("生图")
+    return miss
+
+
 def features_enabled() -> bool:
     """公平规则：生图与识图必须**同时**填齐，昵称与发图片功能才生效。"""
-    v, g = cfg["vision"], cfg["imagegen"]
-    return bool(v["endpoint"] and v["model"] and g["endpoint"] and g["model"])
+    return not missing_features()
+
+
+def gate_error(what: str) -> str:
+    """门禁拦下时的原话 —— 必须点名缺哪一段，否则用户不知道去填什么。
+
+    只有**头像**和**发图片**才真用得上生图/识图：AI 的头像靠生图、
+    看你的头像与照片靠识图、AI 发照片靠生图。昵称是纯文本，不受这个门管。
+    """
+    return f"生图与识图都要填，{what}才生效；现在还差：{'、'.join(missing_features())}"
 
 
 def _same_vision_as_chat() -> bool:
@@ -181,8 +199,11 @@ def _clean_messages(raw) -> list[dict]:
 
 
 def title_from(sess: dict) -> str:
-    """标题 = 有昵称就用昵称（一个会话 = 一个 Being），否则首条人话，最多 50 字。"""
-    if features_enabled() and sess.get("persona", {}).get("nickname"):
+    """标题 = 有昵称就用昵称（一个会话 = 一个 Being），否则首条人话，最多 50 字。
+
+    昵称是纯文本，不归生图/识图那道门管 —— 门只拦头像与发图片。
+    """
+    if sess.get("persona", {}).get("nickname"):
         return str(sess["persona"]["nickname"])[:50]
     for m in sess["messages"]:
         if m["role"] == "human":
@@ -548,10 +569,8 @@ def persona_block(sess: dict) -> str:
 
 
 def me_block() -> str:
-    """AI 看到的对方：昵称 + 头像的识图描述（头像描述只算一次，缓存在配置里）。"""
+    """AI 看到的对方：昵称随时注入；头像描述要有识图才算得出来（缓存在配置里）。"""
     me = cfg["me"]
-    if not features_enabled() or not (me.get("nickname") or me.get("avatar_desc")):
-        return ""
     lines = []
     if me.get("nickname"):
         lines.append(f"- 对方的昵称：{me['nickname']}")
@@ -761,40 +780,57 @@ _PERSONA_SYSTEM = (
 )
 
 
-async def gen_persona() -> dict | None:
-    """让它自己给自己立人设。拿不到合法 JSON 就返回 None（首句照发，只是没有底细）。"""
-    payload = {
-        "model": cfg["model"],
-        "messages": [{"role": "system", "content": _PERSONA_SYSTEM},
-                     {"role": "user", "content": "开始吧，给自己定下来"}],
-        "max_tokens": 600,
-        "temperature": 1.0,
-        "stream": False,
-    }
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(TURN_TIMEOUT, connect=10.0)) as client:
-            r = await client.post(cfg["endpoint"], json=payload, headers=_auth_headers())
-            r.raise_for_status()
-            choices = r.json().get("choices") or []
-    except Exception as exc:  # noqa: BLE001
-        print(f"[persona] call failed: {exc}", flush=True)
-        return None
-    if not choices:
-        return None
-    text = str(choices[0].get("message", {}).get("content") or "")
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        print(f"[persona] no json: {text[:200]}", flush=True)
-        return None
-    try:
-        data = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict) or not str(data.get("nickname") or "").strip():
-        return None
-    return {k: str(data.get(k) or "").strip()[:200] for k in
-            ("nickname", "identity", "age", "gender", "origin", "hobbies", "traits",
-             "avatar_prompt")}
+async def gen_persona(retries: int = 3) -> dict | None:
+    """让它自己给自己立人设。拿不到合法 JSON 就重试，三次都废才放弃。
+
+    踩过的坑：max_tokens 给 600 时，模型的 reasoning_content 与正文共用预算，
+    JSON 经常被砍在半截 —— 正则找不到右括号，整份人设就静默丢了（实测 3 次里
+    1 次）。所以预算抬到 1600，并按 finish_reason=length 直接判截断重来。
+    """
+    for attempt in range(retries):
+        payload = {
+            "model": cfg["model"],
+            "messages": [{"role": "system", "content": _PERSONA_SYSTEM},
+                         {"role": "user", "content": "开始吧，给自己定下来"}],
+            "max_tokens": 1600,
+            "temperature": 1.0,
+            "stream": False,
+        }
+        text = ""
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(TURN_TIMEOUT, connect=10.0)) as client:
+                r = await client.post(cfg["endpoint"], json=payload, headers=_auth_headers())
+                r.raise_for_status()
+                data = r.json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[persona] attempt {attempt + 1} call failed: {exc}", flush=True)
+            continue
+        choices = data.get("choices") or []
+        if not choices:
+            print(f"[persona] attempt {attempt + 1}: no choices", flush=True)
+            continue
+        first = choices[0]
+        if first.get("finish_reason") == "length":  # 预算没给够，别拿半截 JSON 凑
+            print(f"[persona] attempt {attempt + 1}: truncated (length)", flush=True)
+            continue
+        text = str((first.get("message") or {}).get("content") or "")
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            print(f"[persona] attempt {attempt + 1} no json: {text[:160]}", flush=True)
+            continue
+        try:
+            data = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            print(f"[persona] attempt {attempt + 1}: broken json", flush=True)
+            continue
+        if not isinstance(data, dict) or not str(data.get("nickname") or "").strip():
+            print(f"[persona] attempt {attempt + 1}: no nickname", flush=True)
+            continue
+        return {k: str(data.get(k) or "").strip()[:200] for k in
+                ("nickname", "identity", "age", "gender", "origin", "hobbies", "traits",
+                 "avatar_prompt")}
+    print("[persona] gave up after retries", flush=True)
+    return None
 
 
 async def gen_avatar(sess: dict, prompt: str) -> None:
@@ -815,8 +851,12 @@ async def gen_avatar(sess: dict, prompt: str) -> None:
 
 
 async def ensure_persona(sess: dict) -> bool:
-    """第一句话之后：先给自己立人设（昵称/身份/年龄…），头像在后台画。返回是否刚立。"""
-    if sess.get("persona") or not features_enabled():
+    """第一句话之后：先给自己立人设（昵称/身份/年龄…），头像在后台画。返回是否刚立。
+
+    立人设用的是纯文本模型，不归生图/识图那道门管；头像那一半要生图，
+    没填就画不出来 —— 人设照立，只是暂时没有头像。
+    """
+    if sess.get("persona"):
         return False
     if not any(m["role"] == "human" for m in sess["messages"]):
         return False
@@ -828,7 +868,8 @@ async def ensure_persona(sess: dict) -> bool:
     if sess["title"] and not sess.get("renamed"):
         sess["title"] = title_from(sess)
     broadcast({"type": "persona", "sid": sess["id"], "persona": persona})
-    if persona.get("avatar_prompt"):
+    g = cfg["imagegen"]
+    if persona.get("avatar_prompt") and g["endpoint"] and g["model"]:
         pending_avatars.add(sess["id"])
         asyncio.create_task(gen_avatar(sess, persona["avatar_prompt"]))
     return True
@@ -988,7 +1029,7 @@ async def api_send(payload: dict) -> dict:
     msg: dict = {"id": 0, "role": "human", "text": text, "ts": time.time()}
     if image_b64:
         if not features_enabled():
-            return {"ok": False, "error": "生图与识图都要填，才能发图片"}  # 公平规则
+            return {"ok": False, "error": gate_error("发图片")}  # 公平规则
         raw, err = _decode_data_url(image_b64)
         if raw is None:
             return {"ok": False, "error": err or "图片读不出来"}
@@ -1179,6 +1220,7 @@ def config_payload() -> dict:
             "avatar_desc": cfg["me"].get("avatar_desc", ""),
         },
         "features": features_enabled(),
+        "missing": missing_features(),  # 面板靠它点名还差哪一段
         "vision_state": vision_state,
         "same_vision": _same_vision_as_chat(),
     }
@@ -1295,7 +1337,7 @@ async def api_me_avatar(payload: dict) -> dict:
     """传我的头像（只收照片）。识图与生图都填了才存 —— 与昵称同一个开关。
     image 为空表示「移除头像」，不是坏图。"""
     if not features_enabled():
-        return {"ok": False, "error": "生图与识图都要填，才能用昵称和头像"}
+        return {"ok": False, "error": gate_error("头像")}
     data = str(payload.get("image") or "").strip()
     old = cfg["me"].get("avatar")
     if not data:

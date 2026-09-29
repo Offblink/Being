@@ -32,7 +32,7 @@ if /i "%~1"=="-Check" (
   echo url     : %URL%
   echo python  : & where python
   echo config  :
-  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};g=d.get('imagegen') or {};on=bool(v.get('endpoint') and v.get('model') and g.get('endpoint') and g.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  imagegen:','set' if g.get('model') else 'MISSING');print('  nickname+photo:','ON' if on else 'OFF (fill vision AND imagegen)')"
+  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};g=d.get('imagegen') or {};on=bool(v.get('endpoint') and v.get('model') and g.get('endpoint') and g.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  imagegen:','set' if g.get('model') else 'MISSING');print('  avatar+photo:','ON' if on else 'OFF (fill vision AND imagegen)')"
   curl -s -o NUL --max-time 1 "%URL%" 2>nul
   if errorlevel 1 (echo status  : not running) else (echo status  : already running)
   exit /b 0

@@ -59,7 +59,7 @@
   <button id="send" type="button" disabled>发送</button>
 </div>
 
-<!-- 设置：左下角齿轮进入；生图与识图都填，昵称和发图片才生效 -->
+<!-- 设置：左下角齿轮进入；改动自动保存。生图与识图都填，头像与发图片才生效 -->
 <div id="settings-panel" hidden role="dialog" aria-modal="false" aria-label="设置">
   <div class="set-head">
     <h2>设置</h2>
@@ -67,7 +67,8 @@
   </div>
   <div class="set-body">
     <div id="set-gate" class="set-note" hidden>
-      生图与识图<b>都要填</b>，昵称与发图片功能才会出现 —— 对你和它一视同仁
+      生图与识图<b>都要填</b>，头像与发图片才会出现 —— 对你和它一视同仁
+      <span id="set-gate-missing"></span>
     </div>
 
     <section class="set-sec">
@@ -102,7 +103,7 @@
 
     <section class="set-sec">
       <h3>我的资料</h3>
-      <div class="set-note">填了它才看得到你的昵称和头像（它那边也是同一套规矩）</div>
+      <div class="set-note">昵称填了就生效；头像还要等生图与识图都填齐（AI 那边同理）</div>
       <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
       <div class="set-row">
         <img id="me-avatar-preview" alt="" hidden>
@@ -115,9 +116,7 @@
     </section>
   </div>
   <div class="set-foot">
-    <span id="set-status" class="set-hint"></span>
-    <button id="cfg-cancel" type="button" class="ghost">关闭</button>
-    <button id="cfg-save" type="button">保存</button>
+    <span id="set-status" class="set-hint">改完自动保存</span>
   </div>
 </div>
 
