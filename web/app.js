@@ -37,7 +37,7 @@ let persona = {};        // 对方的人设：昵称、身份、头像…
 let myInfo = { nickname: '', avatar: '' };
 let avatarPending = [];  // 头像还在画的会话
 let quote = null;        // {id, role, text} 正准备引用的那条
-let photoDraft = null;   // {data, name} 已选好还没发出去的照片
+let photoDraft = null;   // {data, name} 发送失败暂存的照片（正常路径选完直接发，不进暂存）
 
 /* ---------- 滚动（Fungi 同款） ---------- */
 function isNearBottom(el) {
@@ -95,18 +95,28 @@ function avatarEl(side, src, name) {
   return box;
 }
 
-/* 悬停时间（Fungi 的换算口径：7 天内给月日+时分，更早只给时分） */
+/* 悬停时间：今天只给时分；昨天/前天直接写字；本周内给星期几；跨出本周才写日期 */
 function whenLabel(ts) {
   const t = new Date((ts || 0) * 1000);
   if (!ts || isNaN(t)) return '';
   const now = new Date();
-  const sameDay = t.toDateString() === now.toDateString();
-  const hh = String(t.getHours()).padStart(2, '0');
-  const mm = String(t.getMinutes()).padStart(2, '0');
-  if (sameDay) return `${hh}:${mm}`;
-  const days = (now - t) / 86400000;
-  if (days < 7) return `${t.getMonth() + 1}月${t.getDate()}日 ${hh}:${mm}`;
-  return `${t.getFullYear()}年${t.getMonth() + 1}月${t.getDate()}日 ${hh}:${mm}`;
+  const clock = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+  // 按自然日算差几天，不受时分干扰
+  const dayDiff = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    - new Date(t.getFullYear(), t.getMonth(), t.getDate())) / 86400000);
+  if (dayDiff <= 0) return clock;   // 今天（时钟偏差出来的未来消息也按今天显示）
+  if (dayDiff === 1) return `昨天 ${clock}`;
+  if (dayDiff === 2) return `前天 ${clock}`;
+  const weekStart = (d) => {        // 本周一 0 点（周一为一周之始）
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+    return x.getTime();
+  };
+  if (weekStart(t) === weekStart(now)) return `星期${'日一二三四五六'[t.getDay()]} ${clock}`;
+  const date = t.getFullYear() === now.getFullYear()
+    ? `${t.getMonth() + 1}月${t.getDate()}日`
+    : `${t.getFullYear()}年${t.getMonth() + 1}月${t.getDate()}日`;
+  return `${date} ${clock}`;
 }
 
 /* ---------- 渲染 ---------- */
@@ -120,7 +130,8 @@ function appendMessage(m) {
   row.dataset.mid = m.id;
 
   const when = whenLabel(m.ts);
-  if (when) { row.dataset.when = when; row.title = when; } // 悬停才显示
+  // 只留 data-when 给 CSS 自绘的悬停时间戳；不写 title —— 原生 tooltip 是另一套样式，会重复出现
+  if (when) { row.dataset.when = when; }
 
   const side = mine ? 'me' : 'ai';
   // 公平规则：生图与识图没同时填齐时，头像与昵称整体不生效 —— 双方都不画，气泡仍按左右分列
@@ -161,7 +172,8 @@ function appendMessage(m) {
     img.src = '/media/' + m.image;
     img.alt = m.img_desc || '照片';
     img.loading = 'lazy';
-    img.addEventListener('click', () => window.open(img.src, '_blank', 'noopener'));
+    // 点照片不进新网页 —— 交给系统默认程序打开原图（后端 os.startfile）
+    img.addEventListener('click', () => openMediaNative((img.getAttribute('src') || '').split('/media/').pop()));
     wrap.appendChild(img);
   }
 
@@ -236,20 +248,8 @@ function clearQuote() {
 }
 btnQuoteClear.addEventListener('click', clearQuote);
 
-/* ---------- 发送 ---------- */
-async function send() {
-  const text = input.value.trim();
-  if (!text && !photoDraft) return;
-  const sentPhoto = photoDraft;   // 先留底：请求失败要原样还回去，照片尤其不能丢
-  const sentQuote = quote;
-  input.value = '';
-  autoGrow();
-  const body = { text };
-  if (sentPhoto) body.image = sentPhoto.data;
-  if (sentQuote) body.quote = sentQuote;
-  clearQuote();
-  photoDraft = null;
-  renderPhotoDraft();
+/* 投递一条消息：请求、回合跟踪、失败回滚共用这一条路（文字与「选图直接发」都走它） */
+async function deliver(body, restore) {
   btnSend.disabled = true;
   btnPhoto.disabled = true;
   try {
@@ -272,15 +272,33 @@ async function send() {
       ? e.message : '发送失败，稍后再试';
     elStatus.textContent = msg;
     setTimeout(() => { if (!typing) elStatus.textContent = ''; }, 2500);
-    // 还回去：文字重打一遍能忍，照片重选一遍不能忍
-    photoDraft = sentPhoto;
+    if (restore) restore();
+  } finally {
+    btnPhoto.disabled = !features;
+    autoGrow();   // 按钮状态按「现在还剩什么可发」重算（恢复回来的文字/照片也算）
+  }
+}
+
+async function send() {
+  const text = input.value.trim();
+  if (!text && !photoDraft) return;
+  const sentPhoto = photoDraft;   // 先留底：请求失败要原样还回去，照片尤其不能丢
+  const sentQuote = quote;
+  input.value = '';
+  autoGrow();
+  const body = { text };
+  if (sentPhoto) body.image = sentPhoto.data;
+  if (sentQuote) body.quote = sentQuote;
+  clearQuote();
+  photoDraft = null;
+  renderPhotoDraft();
+  await deliver(body, () => {
+    photoDraft = sentPhoto;       // 文字重打一遍能忍，照片重选一遍不能忍
     renderPhotoDraft();
     if (sentQuote) setQuote(sentQuote);
     input.value = text;
     autoGrow();
-  } finally {
-    btnPhoto.disabled = !features;
-  }
+  });
 }
 
 function autoGrow() {
@@ -355,14 +373,20 @@ photoInput.addEventListener('change', async () => {
   photoInput.value = '';
   if (!file) return;
   if (!features) { elStatus.textContent = '生图与识图都要填，才能发图片'; return; }
+  let data;
   try {
-    photoDraft = { data: await shrinkToDataURL(file), name: file.name };
-    renderPhotoDraft();
+    data = await shrinkToDataURL(file);
   } catch (e) {
     console.error(e);
     elStatus.textContent = '图片读不出来，换一张试试';
-    setTimeout(() => { if (!typing) elStatus.textContent = ''; }, 2500);
+    setTimeout(() => { if (typing) elStatus.textContent = ''; }, 2500);
+    return;
   }
+  // 选完直接发 —— 不在输入框上方暂存；输入框里正在打的字不受影响
+  await deliver({ image: data }, () => {
+    photoDraft = { data, name: file.name };  // 发送失败才暂存：草稿条出现，点发送可重试
+    renderPhotoDraft();
+  });
 });
 
 /* ---------- 通用 POST ---------- */
@@ -561,7 +585,7 @@ document.addEventListener('click', (e) => {
   if (!elPanel.hidden && !elPanel.contains(e.target) && !btnSessions.contains(e.target)) closePanel();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { disarmClear(); closePanel(); closeSettings(); clearQuote(); }
+  if (e.key === 'Escape') { disarmClear(); closePanel(); closeSettings(); clearQuote(); closeModal(); }
 });
 
 /* ---------- SSE ---------- */
@@ -734,8 +758,6 @@ function renderMeAvatar(me) {
   document.getElementById('me-avatar-clear').hidden = !canAvatar;
   const bits = [];
   if (!canAvatar) bits.push(`${missingFeat.join('与') || '生图与识图'}还没填：换头像和发照片都用不了`);
-  if (me.avatar_desc) bits.push('AI 看到的你：' + me.avatar_desc);
-  else if (me.avatar) bits.push('头像的描述还没算出来');
   document.getElementById('me-avatar-hint').textContent = bits.join('　·　');
 }
 
@@ -830,30 +852,229 @@ for (const [id] of SET_FIELDS) {
   });
 }
 
-/* 换头像：先在浏览器里压小，再交给后端存盘并算描述 */
-const meAvatarInput = document.getElementById('me-avatar-input');
-document.getElementById('me-avatar-pick').addEventListener('click', () => meAvatarInput.click());
-meAvatarInput.addEventListener('change', async () => {
-  const file = meAvatarInput.files && meAvatarInput.files[0];
-  meAvatarInput.value = '';
+/* ---------- 模态框 ---------- */
+const elOverlay = document.getElementById('modal-overlay');
+const elCardModal = document.getElementById('card-modal');
+const elCropModal = document.getElementById('crop-modal');
+
+function modalOpen() { return !elOverlay.hidden; }
+
+function openModal(box) {
+  elCardModal.hidden = box !== elCardModal;
+  elCropModal.hidden = box !== elCropModal;
+  elOverlay.hidden = false;
+}
+
+function closeModal() {
+  elOverlay.hidden = true;
+  elCardModal.hidden = true;
+  elCropModal.hidden = true;
+  cropImg = null;          // 放弃这次截取（重新选图会重建）
+}
+
+// 点遮罩自己才关（点内容不关）；×也关
+elOverlay.addEventListener('click', (e) => { if (e.target === elOverlay) closeModal(); });
+elOverlay.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', closeModal));
+
+/* ---------- 对方名片：点顶栏或气泡里的 AI 头像弹出 ---------- */
+const CARD_ROWS = [['age', '年龄'], ['gender', '性别'], ['origin', '来自'],
+                   ['hobbies', '爱好'], ['traits', '性格']];
+
+function cardRowValue(v) {
+  // 服务端立人设时把字段 str() 过 —— 模型给的数组会存成 Python repr「['a', 'b']」。
+  // 数组与这种字符串都拼成「A、B」；真被方括号包着的短语（如「[笑]」）原样留着。
+  if (Array.isArray(v)) return v.map((x) => String(x).trim()).filter(Boolean).join('、');
+  const s = String(v ?? '').trim();
+  if (s.startsWith('[') && s.endsWith(']')) {
+    const items = s.slice(1, -1).match(/(?:'[^']*'|"[^"]*")/g);
+    if (items) return items.map((t) => t.slice(1, -1).trim()).filter(Boolean).join('、');
+  }
+  return s;
+}
+
+function openCard() {
+  if (!persona.nickname) return;   // 这个会话还没立人设，没名片可看
+  const av = features ? (persona.avatar || '') : '';
+  const img = document.getElementById('card-avatar');
+  const fb = document.getElementById('card-fallback');
+  img.hidden = !av;
+  if (av) img.src = '/media/' + av;
+  fb.hidden = !!av;
+  fb.textContent = persona.nickname.slice(0, 1);
+  document.getElementById('card-name').textContent = persona.nickname;
+  document.getElementById('card-identity').textContent = persona.identity || '';
+  const dl = document.getElementById('card-rows');
+  dl.textContent = '';
+  for (const [key, label] of CARD_ROWS) {
+    const text = cardRowValue(persona[key]);
+    if (!text) continue;
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = text;
+    dl.append(dt, dd);
+  }
+  const cur = (sessionCache.find((s) => s.current) || {}).id;
+  document.getElementById('card-pending').hidden = !(features && avatarPending.includes(cur));
+  openModal(elCardModal);
+}
+
+elPeer.addEventListener('click', openCard);
+msgs.addEventListener('click', (e) => { if (e.target.closest('.msg.ai > .avatar')) openCard(); });
+/* 用系统默认程序打开 media/ 里的图片 —— Being 就跑在本机，后端直接 os.startfile。
+   名片头像、消息里的照片都走这一条；失败在底部状态栏就地说明。 */
+async function openMediaNative(file) {
   if (!file) return;
   try {
-    const data = await shrinkToDataURL(file, 512, 0.88);
-    const status = document.getElementById('set-status');
-    status.textContent = '头像上传中…';
-    const r = await fetch('/api/me/avatar', {
+    const r = await fetch('/api/media/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: data }),
+      body: JSON.stringify({ file }),
     });
+    const out = await r.json();
+    if (!out.ok) throw new Error(out.error || r.status);
+  } catch (e) {
+    console.error('open media failed:', e);
+    const msg = e.message || '打不开这张图';
+    elStatus.textContent = msg;
+    setTimeout(() => { if (elStatus.textContent === msg) elStatus.textContent = ''; }, 3000);
+  }
+}
+
+// 名片里点头像 → 系统默认程序打开原图
+document.getElementById('card-avatar').addEventListener('click', () => {
+  openMediaNative(features ? (persona.avatar || '') : '');
+});
+
+/* ---------- 头像截取：圆形取景框拖动 + 滑块缩放，确认出 512² 方图 ---------- */
+const cropCanvas = document.getElementById('crop-canvas');
+const cropZoomInput = document.getElementById('crop-zoom');
+const CROP_SIZE = 280;
+const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp'];  // gif 等 AI 识不了，不收
+let cropImg = null;              // 待截取的图片（HTMLImageElement）
+let cropFit = 1;                 // 刚好铺满圆形视口的基准缩放
+let cropZoom = 1;                // 滑块倍数（0.5–3）
+let cropX = 0, cropY = 0;        // 相对中心的偏移（画布像素）
+let cropDrag = null;
+
+function cropGeom() {
+  const iw = cropImg.width * cropFit * cropZoom;
+  const ih = cropImg.height * cropFit * cropZoom;
+  // 拖动夹紧：图片边缘不许缩进圆形视口（图太小或缩放太低时就固定居中）
+  const maxX = Math.max(0, (iw - CROP_SIZE) / 2);
+  const maxY = Math.max(0, (ih - CROP_SIZE) / 2);
+  cropX = Math.min(maxX, Math.max(-maxX, cropX));
+  cropY = Math.min(maxY, Math.max(-maxY, cropY));
+  return { iw, ih };
+}
+
+function drawCrop() {
+  if (!cropImg) return;
+  const { iw, ih } = cropGeom();
+  const ctx = cropCanvas.getContext('2d');
+  ctx.clearRect(0, 0, CROP_SIZE, CROP_SIZE);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(CROP_SIZE / 2, CROP_SIZE / 2, CROP_SIZE / 2, 0, Math.PI * 2);
+  ctx.clip();                      // 只画圆里那部分 —— 圆外露出深色取景框
+  ctx.drawImage(cropImg, (CROP_SIZE - iw) / 2 + cropX, (CROP_SIZE - ih) / 2 + cropY, iw, ih);
+  ctx.restore();
+}
+
+cropCanvas.addEventListener('pointerdown', (e) => {
+  if (!cropImg) return;
+  cropCanvas.setPointerCapture(e.pointerId);   // 指针移出画布也不断拖
+  cropDrag = { x: e.clientX, y: e.clientY, ox: cropX, oy: cropY };
+});
+cropCanvas.addEventListener('pointermove', (e) => {
+  if (!cropDrag) return;
+  cropX = cropDrag.ox + (e.clientX - cropDrag.x);
+  cropY = cropDrag.oy + (e.clientY - cropDrag.y);
+  drawCrop();
+});
+const endCropDrag = () => { cropDrag = null; };
+cropCanvas.addEventListener('pointerup', endCropDrag);
+cropCanvas.addEventListener('pointercancel', endCropDrag);
+cropZoomInput.addEventListener('input', () => {
+  cropZoom = parseInt(cropZoomInput.value, 10) / 100;
+  drawCrop();
+});
+
+function uploadAvatar(data) {   // 存盘并算描述（AI 看得见的那份），成功后回填设置
+  return fetch('/api/me/avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: data }),
+  }).then(async (r) => {
     const out = await r.json();
     if (!out.ok) throw new Error(out.error || r.status);
     fillSettings(out.config);
     myInfo = out.config.me || myInfo;
-    status.textContent = '头像已换';
+  });
+}
+
+/* 换头像：选图（只收 jpg/png/webp）→ 弹截取 → 确认后上传 */
+const meAvatarInput = document.getElementById('me-avatar-input');
+const setAvatarStatus = (t) => { document.getElementById('set-status').textContent = t; };
+document.getElementById('me-avatar-pick').addEventListener('click', () => meAvatarInput.click());
+meAvatarInput.addEventListener('change', () => {
+  const file = meAvatarInput.files && meAvatarInput.files[0];
+  meAvatarInput.value = '';
+  if (!file) return;
+  if (!AVATAR_TYPES.includes(file.type)) {
+    setAvatarStatus('头像只收 jpg/png/webp —— gif 和其它格式 AI 识不了');
+    return;
+  }
+  setAvatarStatus('读取图片…');
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    cropImg = img;
+    cropFit = Math.max(CROP_SIZE / img.width, CROP_SIZE / img.height);  // 基准 = 正好铺满
+    cropZoom = 1;
+    cropZoomInput.value = '100';
+    cropX = 0;
+    cropY = 0;
+    drawCrop();
+    openModal(elCropModal);
+    setAvatarStatus('');   // 截取框已就位，读取阶段的提示撤掉
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); setAvatarStatus('图片读不出来，换一张试试'); };
+  img.src = url;
+});
+
+document.getElementById('crop-cancel').addEventListener('click', closeModal);
+
+document.getElementById('crop-ok').addEventListener('click', async () => {
+  if (!cropImg) return;
+  const btn = document.getElementById('crop-ok');
+  btn.disabled = true;
+  btn.dataset.busy = '1';     // 转圈加载态
+  btn.textContent = '上传中…';
+  try {
+    const OUT = 512;             // 与旧管线同规格：512 / JPEG 0.88
+    const out = document.createElement('canvas');
+    out.width = out.height = OUT;
+    const octx = out.getContext('2d');
+    octx.fillStyle = '#fff';     // 透明兜底：jpeg 不吃 alpha
+    octx.fillRect(0, 0, OUT, OUT);
+    const k = OUT / CROP_SIZE;
+    const { iw, ih } = cropGeom();
+    octx.drawImage(cropImg,
+      ((CROP_SIZE - iw) / 2 + cropX) * k, ((CROP_SIZE - ih) / 2 + cropY) * k,
+      iw * k, ih * k);
+    setAvatarStatus('头像上传中…');
+    await uploadAvatar(out.toDataURL('image/jpeg', 0.88));
+    closeModal();
+    setAvatarStatus('头像已换');
   } catch (e) {
     console.error('avatar upload failed:', e);
-    document.getElementById('set-status').textContent = e.message || '头像上传失败';
+    setAvatarStatus(e.message || '头像上传失败');
+  } finally {
+    btn.disabled = false;
+    delete btn.dataset.busy;
+    btn.textContent = '确认';
   }
 });
 
@@ -868,9 +1089,9 @@ document.getElementById('me-avatar-clear').addEventListener('click', async () =>
   if (out.ok) { fillSettings(out.config); myInfo = out.config.me || myInfo; }
 });
 
-// 点别处或按 Esc：收起设置
+// 点别处或按 Esc：收起设置（模态框开着时不动它 —— 截取头像就是在设置里点出来的）
 document.addEventListener('click', (e) => {
-  if (!elSettings.hidden && !elSettings.contains(e.target) && !btnSettings.contains(e.target)) {
+  if (!elSettings.hidden && !modalOpen() && !elSettings.contains(e.target) && !btnSettings.contains(e.target)) {
     closeSettings();
   }
 });

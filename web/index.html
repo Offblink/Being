@@ -36,13 +36,14 @@
 <main id="chat-wrap">
   <div id="messages"></div>
   <button id="scroll-bottom" type="button" aria-label="回到底部">回到底部</button>
-  <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel"
-          title="设置" aria-label="设置">&#9881;</button>
 </main>
 
 <div id="status" aria-live="polite"></div>
 
 <div id="input-area">
+  <!-- 设置入口就在底栏里（不再悬浮在聊天区左下角） -->
+  <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel"
+          title="设置" aria-label="设置">&#9881;</button>
   <div id="input-col">
     <div id="quote-bar" hidden>
       <div id="quote-inner">
@@ -59,7 +60,7 @@
   <button id="send" type="button" disabled>发送</button>
 </div>
 
-<!-- 设置：左下角齿轮进入；改动自动保存。生图与识图都填，头像与发图片才生效 -->
+<!-- 设置：底栏齿轮进（面板照旧浮在输入条上方）；改动自动保存。生图与识图都填，头像与发图片才生效 -->
 <div id="settings-panel" hidden role="dialog" aria-modal="false" aria-label="设置">
   <div class="set-head">
     <h2>设置</h2>
@@ -106,13 +107,47 @@
       <div class="set-row" id="me-avatar-actions">
         <button id="me-avatar-pick" type="button">换头像</button>
         <button id="me-avatar-clear" type="button" class="ghost">移除</button>
-        <input type="file" id="me-avatar-input" accept="image/*" hidden>
+        <input type="file" id="me-avatar-input" accept="image/jpeg,image/png,image/webp" hidden>
       </div>
       <div id="me-avatar-hint" class="set-hint"></div>
     </section>
   </div>
   <div class="set-foot">
     <span id="set-status" class="set-hint">改完自动保存</span>
+  </div>
+</div>
+
+<!-- 模态框：点 AI 头像弹「对方名片」；换头像选完图弹「截取头像」。点遮罩或 Esc 关闭 -->
+<div id="modal-overlay" hidden>
+  <div id="card-modal" class="modal-box" hidden role="dialog" aria-modal="true" aria-labelledby="card-name">
+    <button class="modal-close" data-close type="button" aria-label="关闭名片">&times;</button>
+    <div class="card-head">
+      <img id="card-avatar" alt="" hidden>
+      <span id="card-fallback" class="avatar-fallback" hidden></span>
+      <div>
+        <div id="card-name"></div>
+        <div id="card-identity"></div>
+      </div>
+    </div>
+    <dl id="card-rows"></dl>
+    <div id="card-pending" class="set-hint" hidden>头像还在画，画好了会自己出现</div>
+  </div>
+
+  <div id="crop-modal" class="modal-box" hidden role="dialog" aria-modal="true" aria-label="截取头像">
+    <button class="modal-close" data-close type="button" aria-label="关闭截取">&times;</button>
+    <h3>截取头像</h3>
+    <div id="crop-frame">
+      <canvas id="crop-canvas" width="280" height="280"></canvas>
+    </div>
+    <div class="crop-slider">
+      <span aria-hidden="true">&minus;</span>
+      <input type="range" id="crop-zoom" min="50" max="300" value="100" aria-label="缩放">
+      <span aria-hidden="true">+</span>
+    </div>
+    <div class="crop-actions">
+      <button id="crop-cancel" type="button">取消</button>
+      <button id="crop-ok" type="button">确认</button>
+    </div>
   </div>
 </div>
 

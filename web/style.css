@@ -637,29 +637,26 @@ body {
 }
 #peer-avatar-pending { font-size: 0.7rem; color: var(--text-3); }
 
-/* ---------- 左下角设置入口 ---------- */
+/* ---------- 底栏里的设置入口 ---------- */
 #settings-toggle {
-  position: absolute;
-  left: 1.25rem;
-  bottom: 1.1rem;
-  z-index: 10;
+  flex: 0 0 auto;
+  align-self: flex-end;   /* 与发照片/发送两个按钮贴底对齐（列里有引用条时它俩在下面） */
   width: 2.4rem;
   height: 2.4rem;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 50%;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-2);
   font-size: 1.05rem;
   line-height: 1;
   cursor: pointer;
-  box-shadow: var(--shadow);
   transition: color 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 #settings-toggle:hover { color: var(--accent); border-color: var(--accent); transform: rotate(30deg); }
 #settings-toggle[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
 
-/* ---------- 设置面板 ---------- */
+/* ---------- 设置面板：照旧浮在底栏上方的左下角（只有入口按钮挪进了底栏） ---------- */
 #settings-panel {
   position: fixed;
   left: 1rem;
@@ -839,12 +836,173 @@ body {
   outline-offset: 2px;
 }
 
+/* ---------- 模态框：对方名片 / 头像截取 ---------- */
+/* 顶栏与气泡里的 AI 头像都能点开名片 */
+#peer, .msg.ai > .avatar { cursor: pointer; }
+
+#modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(24, 24, 27, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+/* [hidden] 要盖掉自己声明的 display:flex，不然藏不起来 */
+#modal-overlay[hidden] { display: none; }
+
+.modal-box {
+  position: relative;
+  width: min(360px, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.2rem 1.2rem;
+}
+.modal-box[hidden] { display: none; }
+.modal-box h3 { margin: 0 0 0.4rem; font-size: 1rem; }
+
+.modal-close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.modal-close:hover { background: var(--bg); color: var(--text); }
+
+/* 名片：头像与昵称并排在头部，个人信息在下面一项一行（没值的项整行不出现） */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding-right: 1.6rem;   /* 给右上角 × 让位 */
+}
+.card-head img,
+.card-head .avatar-fallback {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+#card-avatar { cursor: pointer; }   /* 有头像才可见：点了用系统默认程序打开原图 */
+.card-head .avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  font-weight: 650;
+  color: var(--text-2);
+}
+#card-name { font-size: 1.1rem; font-weight: 650; }
+#card-identity { font-size: 0.85rem; color: var(--text-2); }
+#card-rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4rem 0.9rem;
+  margin: 0.9rem 0 0;
+  font-size: 0.86rem;
+}
+#card-rows:empty { display: none; }
+#card-rows dt { color: var(--text-3); }
+#card-rows dd { margin: 0; }
+#card-pending { margin-top: 0.7rem; }
+
+/* 头像截取：深色取景框 + 圆形视口，框外一片就是不进头像的部分 */
+#crop-frame {
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  margin: 0.7rem auto;
+  background: rgba(24, 24, 27, 0.55);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#crop-canvas {
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  cursor: grab;
+  touch-action: none;      /* 拖图时别把整个页面也带跑 */
+  display: block;
+}
+#crop-canvas:active { cursor: grabbing; }
+
+.crop-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--text-3);
+  font-size: 0.8rem;
+}
+.crop-slider input[type="range"] { flex: 1; accent-color: var(--accent); }
+
+.crop-actions { display: flex; gap: 0.7rem; margin-top: 0.9rem; }
+.crop-actions button {
+  flex: 1;
+  padding: 0.42rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+.crop-actions button:hover { background: var(--bg); color: var(--text); border-color: var(--accent); }
+#crop-ok {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+#crop-ok:hover { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--on-accent); }
+#crop-ok:disabled { opacity: 0.6; cursor: default; }
+/* 上传中的加载态：转圈跟着按钮文案一起出现（data-busy 由确认按钮的处理器打上） */
+#crop-ok[data-busy]::after {
+  content: '';
+  display: inline-block;
+  width: 0.62em;
+  height: 0.62em;
+  margin-left: 0.4em;
+  vertical-align: -0.08em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: crop-spin 0.7s linear infinite;
+}
+@keyframes crop-spin { to { transform: rotate(360deg); } }
+
+/* 模态框的焦点环与其它按钮一致（鼠标点击不出、Tab 才出） */
+.modal-close:focus-visible,
+#crop-cancel:focus-visible,
+#crop-ok:focus-visible,
+#crop-zoom:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 @media (max-width: 640px) {
   .bubble-wrap { max-width: 84%; }
   .avatar { width: 27px; height: 27px; font-size: 0.74rem; }
   #topbar { padding: 0 0.9rem; }
   #sessions-panel { left: 0.9rem; }
-  #settings-toggle { left: 0.9rem; }
   #settings-panel { left: 0.6rem; width: calc(100vw - 1.2rem); }
   #peer-name { max-width: 34vw; font-size: 0.88rem; }
 }

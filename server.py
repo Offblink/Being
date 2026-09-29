@@ -14,6 +14,7 @@ import asyncio
 import base64
 import binascii
 import json
+import os
 import random
 import re
 import time
@@ -504,16 +505,52 @@ def _send_photo_tool(sess: dict):
     }
 
 
+def _view_avatar_tool():
+    """看一眼对方的头像 —— 返回真图 data URI，由 call_llm 紧跟工具结果注入上下文。"""
+
+    async def impl() -> tuple[str, str | None]:
+        name = str(cfg["me"].get("avatar") or "")
+        path = MEDIA_DIR / name if name else None
+        if not path or not path.is_file():
+            return ("（对方还没有设置头像，看不到图 —— 如实告诉对方你现在看不到ta的头像）", None)
+        raw = path.read_bytes()
+        ext = sniff_image(raw)
+        if ext not in ("jpg", "png", "webp"):
+            return ("（对方的头像文件读不出来，看不到图）", None)
+        mime = {"jpg": "image/jpeg", "png": "image/png", "webp": "image/webp"}[ext]
+        uri = f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+        return (
+            "（对方现在的头像原图已经放在下面给你看了 —— 照着画面里真实的样子回应；"
+            "提示词里那句文字描述可能过时或不全，以图为准）",
+            uri,
+        )
+
+    return {
+        "name": "view_user_avatar",
+        "description": (
+            "看一眼对方（正在和你聊天的人）现在的头像，拿到的是真图、不是文字描述。"
+            "什么时候用：对方提到自己的头像、问你看到的是什么样、刚换了头像，或你想确认"
+            "头像里的具体细节时。看完照着画面自然地说，别念参数，别跟对方提工具。"
+        ),
+        "impl": impl,
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    }
+
+
 def active_tools(sess: dict | None) -> list[dict]:
-    """这个会话这一轮能用的工具：生图与识图填齐才多出 send_photo。"""
+    """这个会话这一轮能用的工具：生图与识图填齐才多出 send_photo；
+    看头像真图还要求识图与聊天是同一套模型 —— 不是同一套的话，图片发过去聊天模型吃不下。"""
     tools = list(TOOLS)
     if sess is not None and features_enabled():
         tools.append(_send_photo_tool(sess))
+        if _same_vision_as_chat():
+            tools.append(_view_avatar_tool())
     return tools
 
 
-async def run_tool(call: dict, sess: dict | None = None) -> str:
-    """跑一次工具调用。工具自己出问题不该炸掉整轮：如实告诉模型。"""
+async def run_tool(call: dict, sess: dict | None = None) -> tuple[str, str | None]:
+    """跑一次工具调用。返回 (给模型的文字, 顺带要塞进上下文的图片 data URI 或 None)。
+    工具自己出问题不该炸掉整轮：如实告诉模型。"""
     fn = call.get("function") or {}
     name = str(fn.get("name") or "")
     args = fn.get("arguments")
@@ -531,10 +568,12 @@ async def run_tool(call: dict, sess: dict | None = None) -> str:
                     res = tool["impl"]()
                 if asyncio.iscoroutine(res):
                     res = await res
-                return str(res)
+                if isinstance(res, tuple):
+                    return str(res[0]), (str(res[1]) if len(res) > 1 and res[1] else None)
+                return str(res), None
             except Exception as exc:  # noqa: BLE001 - 工具是外挂的，什么都可能抛
-                return f"（{name} 没能取到结果：{exc}）"
-    return f"（没有叫 {name} 的工具）"
+                return f"（{name} 没能取到结果：{exc}）", None
+    return f"（没有叫 {name} 的工具）", None
 
 
 def tool_specs(sess: dict | None = None) -> list[dict]:
@@ -638,13 +677,29 @@ async def call_llm(sess: dict) -> str:
                 {"role": "assistant", "content": msg.get("content") or None, "tool_calls": calls}
             )
             for call in calls:
+                text, image_uri = await run_tool(call, sess)
                 convo.append(
                     {
                         "role": "tool",
                         "tool_call_id": str(call.get("id") or ""),
-                        "content": await run_tool(call, sess),
+                        "content": text,
                     }
                 )
+                if image_uri:
+                    # OpenAI 规范里 tool 消息只吃字符串，图片走紧随其后的一条注入消息 ——
+                    # 用的都是本项目已验证过的形状（字符串工具结果 + user 消息里的 image_url）。
+                    # 只活在这次生成的临时上下文里，不进对话存档。
+                    convo.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text",
+                                 "text": "【工具取回的画面】上面那次调用拿回来的就是这张图。"
+                                         "照着图里真实的样子往下接话，别拿文字描述代替看图。"},
+                                {"type": "image_url", "image_url": {"url": image_uri}},
+                            ],
+                        }
+                    )
     raise RuntimeError(f"tool rounds exhausted ({MAX_TOOL_ROUNDS})")
 
 
@@ -1364,6 +1419,41 @@ async def api_config_put(payload: dict) -> dict:
     return {"ok": True, "config": config_payload()}
 
 
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    """后台任务：存个引用，免得任务对象跑到一半被垃圾回收凭空消失。"""
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+
+
+async def _describe_me_avatar(name: str) -> None:
+    """给刚传的头像算描述 —— **异步补，不卡上传**。识图偶发失败隔 3 秒重试（共三次尝试）——
+    描述丢了没有别的地方会再补，值得多试几次；头像这期间被换掉/移除就放弃。"""
+    if cfg["me"].get("avatar") != name:
+        return
+    print(f"[avatar] describe start: {name}", flush=True)
+    desc = ""
+    for attempt in range(3):
+        if attempt:
+            if cfg["me"].get("avatar") != name:
+                return
+            print(f"[avatar] describe retry {attempt}: {name}", flush=True)
+            await asyncio.sleep(3)
+        desc = await describe_image(name)
+        if desc:
+            break
+    if cfg["me"].get("avatar") != name:
+        print(f"[avatar] describe stale, dropped: {name}", flush=True)
+        return
+    cfg["me"]["avatar_desc"] = desc
+    save_config()
+    broadcast_state()
+    print(f"[avatar] describe {'done' if desc else 'EMPTY'}: {name}", flush=True)
+
+
 @app.post("/api/me/avatar")
 async def api_me_avatar(payload: dict) -> dict:
     """传我的头像（只收照片）。识图与生图都填了才存 —— 与昵称同一个开关。
@@ -1387,13 +1477,15 @@ async def api_me_avatar(payload: dict) -> dict:
     if raw is None:
         return {"ok": False, "error": err or "图片读不出来"}
     ext = sniff_image(raw)
-    if not ext:
-        return {"ok": False, "error": "只收照片（jpeg/png/webp/gif）"}
+    if ext not in ("jpg", "png", "webp"):
+        # gif 动图识图模型吃不下；扩展名之外的类型一并挡掉（magic bytes 说了算。
+        # 注意 sniff_image 对 jpeg 回的是 "jpg" —— 写 "jpeg" 会把所有 jpg 都挡死）
+        return {"ok": False, "error": "头像只收 jpg/png/webp（gif 等格式 AI 识不了）"}
     if len(raw) > 2 * 1024 * 1024:
         return {"ok": False, "error": "头像压到 2MB 以内"}
     name = save_image_bytes(media_name("me", ext), raw)
     cfg["me"]["avatar"] = name
-    cfg["me"]["avatar_desc"] = await describe_image(name)  # 算一次就缓存，AI 才"看得见"
+    cfg["me"]["avatar_desc"] = ""  # 描述后台补：上传只管存盘，不替用户等识图
     save_config()
     if old and old != name:
         try:
@@ -1401,7 +1493,28 @@ async def api_me_avatar(payload: dict) -> dict:
         except OSError:
             pass
     broadcast_state()
+    _spawn(_describe_me_avatar(name))  # 算完会再广播一次，AI 下一轮之前看得到就行
     return {"ok": True, "config": config_payload()}
+
+
+@app.post("/api/media/open")
+async def api_media_open(payload: dict) -> dict:
+    """名片里点头像 → 用系统默认程序打开原图。Being 就跑在本机、文件就在 media/，
+    直接 startfile 交给系统默认看图程序。只认 media/ 下的纯文件名 ——
+    basename 挡路径穿越，magic bytes 挡「随便指个文件就打开」。"""
+    name = str(payload.get("file") or "")
+    if not name or Path(name).name != name:
+        return {"ok": False, "error": "只认 media/ 下的文件名"}
+    path = MEDIA_DIR / name
+    if not path.is_file() or not sniff_image(path.read_bytes()[:16]):
+        return {"ok": False, "error": "没有这张图"}
+    if not hasattr(os, "startfile"):
+        return {"ok": False, "error": "这个系统还不支持直接打开"}
+    try:
+        os.startfile(path)  # noqa: S606 - 本机个人应用，按设计打开用户自己点的那张图
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}
 
 
 def _sse(obj: dict) -> str:
