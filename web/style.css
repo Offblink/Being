@@ -747,14 +747,6 @@ body {
   font-size: 0.73rem;
   line-height: 1.55;
 }
-#set-gate {
-  margin-bottom: 0.55rem;
-  border: 1px solid var(--danger-border);
-  border-left: 3px solid var(--danger);
-  background: var(--danger-bg);
-  color: var(--danger);
-  font-size: 0.74rem;
-}
 .set-hint { font-size: 0.72rem; color: var(--text-3); }
 #detect-state[data-known="yes"] { color: var(--online); }
 #detect-state[data-known="no"] { color: var(--danger); }
