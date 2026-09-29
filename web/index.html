@@ -13,6 +13,12 @@
             title="会话列表（每个会话是一个 Being 的记忆）">会话</button>
     <div class="brand">Being</div>
   </div>
+  <div id="peer" hidden>
+    <img id="peer-avatar" alt="" hidden>
+    <span id="peer-fallback" class="avatar-fallback" hidden></span>
+    <span id="peer-name"></span>
+    <span id="peer-avatar-pending" hidden>头像画好了会自己出现</span>
+  </div>
   <div class="top-right">
     <div id="conn" data-state="pending" title="冒烟调用成功即在线">
       <span class="conn-dot"></span><span id="conn-text">检测中</span>
@@ -28,14 +34,89 @@
 <main id="chat-wrap">
   <div id="messages"></div>
   <button id="scroll-bottom" type="button" aria-label="回到底部">回到底部</button>
+  <button id="settings-toggle" type="button" aria-expanded="false" aria-controls="settings-panel"
+          title="设置" aria-label="设置">&#9881;</button>
 </main>
 
 <div id="status" aria-live="polite"></div>
 
 <div id="input-area">
-  <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
-            autocomplete="off" spellcheck="false"></textarea>
+  <div id="input-col">
+    <div id="quote-bar" hidden>
+      <div id="quote-inner">
+        <span id="quote-label"></span>
+        <span id="quote-text"></span>
+        <button id="quote-clear" type="button" title="取消引用" aria-label="取消引用">&times;</button>
+      </div>
+    </div>
+    <input type="file" id="photo-input" accept="image/*" hidden>
+    <textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"
+              autocomplete="off" spellcheck="false"></textarea>
+  </div>
+  <button id="photo" type="button" title="发一张照片（只能是照片）" aria-label="发照片" hidden>&#128247;</button>
   <button id="send" type="button" disabled>发送</button>
+</div>
+
+<!-- 设置：左下角齿轮进入；生图与识图都填，昵称和发图片才生效 -->
+<div id="settings-panel" hidden role="dialog" aria-modal="false" aria-label="设置">
+  <div class="set-head">
+    <h2>设置</h2>
+    <button id="settings-close" type="button" aria-label="关闭设置">&times;</button>
+  </div>
+  <div class="set-body">
+    <div id="set-gate" class="set-note" hidden>
+      生图与识图<b>都要填</b>，昵称与发图片功能才会出现 —— 对你和它一视同仁
+    </div>
+
+    <section class="set-sec">
+      <h3>聊天模型</h3>
+      <label>接口地址 <input id="cfg-endpoint" type="text" spellcheck="false"
+             placeholder="https://api.xxx.com/v1/chat/completions"></label>
+      <label>密钥 <input id="cfg-key" type="password" spellcheck="false"
+             placeholder="留空表示不需要密钥（本地模型）"></label>
+      <label>模型名 <input id="cfg-model" type="text" spellcheck="false" placeholder="gpt-4o-mini"></label>
+      <div class="set-actions">
+        <button id="cfg-detect" type="button">重新检测识图</button>
+        <span id="detect-state" class="set-hint"></span>
+      </div>
+    </section>
+
+    <section class="set-sec">
+      <h3>识图</h3>
+      <div class="set-note">改聊天模型会自动检测：支持就自动填成同一个，不支持留空（可自己填别的）</div>
+      <label>接口地址 <input id="vis-endpoint" type="text" spellcheck="false"></label>
+      <label>密钥 <input id="vis-key" type="password" spellcheck="false"></label>
+      <label>模型名 <input id="vis-model" type="text" spellcheck="false"></label>
+    </section>
+
+    <section class="set-sec">
+      <h3>生图</h3>
+      <label>接口地址 <input id="gen-endpoint" type="text" spellcheck="false"
+             placeholder="https://api.xxx.com/v1/images/generations"></label>
+      <label>密钥 <input id="gen-key" type="password" spellcheck="false"></label>
+      <label>模型名 <input id="gen-model" type="text" spellcheck="false"></label>
+      <label>尺寸 <input id="gen-size" type="text" spellcheck="false" placeholder="1024x1024"></label>
+    </section>
+
+    <section class="set-sec">
+      <h3>我的资料</h3>
+      <div class="set-note">填了它才看得到你的昵称和头像（它那边也是同一套规矩）</div>
+      <label>昵称 <input id="me-nickname" type="text" maxlength="20" placeholder="对方看到的名字"></label>
+      <div class="set-row">
+        <img id="me-avatar-preview" alt="" hidden>
+        <span id="me-avatar-fallback" class="avatar-fallback" hidden></span>
+        <button id="me-avatar-pick" type="button">换头像</button>
+        <button id="me-avatar-clear" type="button" class="ghost">移除</button>
+        <input type="file" id="me-avatar-input" accept="image/*" hidden>
+      </div>
+      <div id="me-avatar-hint" class="set-hint"></div>
+    </section>
+  </div>
+  <div class="set-foot">
+    <span id="set-status" class="set-hint"></span>
+    <button id="cfg-cancel" type="button" class="ghost">关闭</button>
+    <button id="cfg-save" type="button">保存</button>
+  </div>
 </div>
 
 <script src="app.js"></script>

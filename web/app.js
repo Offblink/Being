@@ -13,11 +13,30 @@ const btnSessions = document.getElementById('sessions-toggle');
 const elPanel = document.getElementById('sessions-panel');
 const btnNewSession = document.getElementById('new-session');
 const elSessionList = document.getElementById('session-list');
+const btnSettings = document.getElementById('settings-toggle');
+const elSettings = document.getElementById('settings-panel');
+const btnPhoto = document.getElementById('photo');
+const photoInput = document.getElementById('photo-input');
+const quoteBar = document.getElementById('quote-bar');
+const quoteLabel = document.getElementById('quote-label');
+const quoteText = document.getElementById('quote-text');
+const btnQuoteClear = document.getElementById('quote-clear');
+const elPeer = document.getElementById('peer');
+const elPeerName = document.getElementById('peer-name');
+const elPeerAvatar = document.getElementById('peer-avatar');
+const elPeerFallback = document.getElementById('peer-fallback');
+const elPeerPending = document.getElementById('peer-avatar-pending');
 
 let unread = 0;          // 停在底部时收到的条数 → 胶囊文案
 let maxId = -1;          // 已渲染的最大消息 id（SSE 与 POST 响应可能乱序，按 id 去重）
 let currentTurn = 0;     // 最新一轮号；旧轮的 turn_end 按号忽略
 let typing = false;
+let features = false;    // 生图与识图是否都填了（昵称与发图片的总开关）
+let persona = {};        // 对方的人设：昵称、身份、头像…
+let myInfo = { nickname: '', avatar: '' };
+let avatarPending = [];  // 头像还在画的会话
+let quote = null;        // {id, role, text} 正准备引用的那条
+let photoDraft = null;   // {data, name} 已选好还没发出去的照片
 
 /* ---------- 滚动（Fungi 同款） ---------- */
 function isNearBottom(el) {
@@ -58,17 +77,110 @@ function setTyping(on) {
   elStatus.textContent = on ? '对方正在输入…' : '';
 }
 
+/* ---------- 头像与时间 ---------- */
+function avatarEl(side, src, name) {
+  const box = document.createElement('span');
+  box.className = 'avatar ' + side;
+  if (src) {
+    const img = document.createElement('img');
+    img.src = '/media/' + src;
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    box.appendChild(img);
+  } else {
+    box.classList.add('empty');
+    box.textContent = (name || '?').slice(0, 1);
+  }
+  return box;
+}
+
+/* 悬停时间（Fungi 的换算口径：7 天内给月日+时分，更早只给时分） */
+function whenLabel(ts) {
+  const t = new Date((ts || 0) * 1000);
+  if (!ts || isNaN(t)) return '';
+  const now = new Date();
+  const sameDay = t.toDateString() === now.toDateString();
+  const hh = String(t.getHours()).padStart(2, '0');
+  const mm = String(t.getMinutes()).padStart(2, '0');
+  if (sameDay) return `${hh}:${mm}`;
+  const days = (now - t) / 86400000;
+  if (days < 7) return `${t.getMonth() + 1}月${t.getDate()}日 ${hh}:${mm}`;
+  return `${t.getFullYear()}年${t.getMonth() + 1}月${t.getDate()}日 ${hh}:${mm}`;
+}
+
 /* ---------- 渲染 ---------- */
 function appendMessage(m) {
   if (typeof m.id !== 'number' || m.id <= maxId) return; // 去重 + 保序
   maxId = m.id;
-  const stick = isNearBottom(msgs) || m.role === 'human'; // 自己发的总要看见
+  const mine = m.role === 'human';
+  const stick = isNearBottom(msgs) || mine; // 自己发的总要看见
   const row = document.createElement('div');
-  row.className = 'msg ' + (m.role === 'human' ? 'me' : 'ai');
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble';
-  bubble.textContent = m.text;
-  row.appendChild(bubble);
+  row.className = 'msg ' + (mine ? 'me' : 'ai');
+  row.dataset.mid = m.id;
+
+  const when = whenLabel(m.ts);
+  if (when) { row.dataset.when = when; row.title = when; } // 悬停才显示
+
+  const side = mine ? 'me' : 'ai';
+  // 公平规则：生图与识图没同时填齐时，头像与昵称整体不生效 —— 双方都不画，气泡仍按左右分列
+  const who = features ? (mine ? myInfo.nickname : (persona.nickname || '')) : '';
+  const avSrc = features ? (mine ? myInfo.avatar : (persona.avatar || '')) : '';
+  if (features) {
+    row.appendChild(avatarEl(side, avSrc, who || '?'));
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'bubble-wrap';
+
+  if (m.quote && m.quote.text) {
+    const q = document.createElement('div');
+    q.className = 'quoted';
+    q.dataset.qid = m.quote.id == null ? '' : m.quote.id;
+    const lab = document.createElement('span');
+    lab.className = 'quoted-label';
+    lab.textContent = m.quote.role === 'human' ? '引用我' : '引用对方';
+    const body = document.createElement('span');
+    body.className = 'quoted-text';
+    body.textContent = m.quote.text;
+    q.append(lab, body);
+    q.addEventListener('click', () => {
+      const target = msgs.querySelector(`[data-mid="${m.quote.id}"]`);
+      if (target) {
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.add('flash');
+        setTimeout(() => target.classList.remove('flash'), 900);
+      }
+    });
+    wrap.appendChild(q);
+  }
+
+  if (m.image) {
+    const img = document.createElement('img');
+    img.className = 'photo';
+    img.src = '/media/' + m.image;
+    img.alt = m.img_desc || '照片';
+    img.loading = 'lazy';
+    img.addEventListener('click', () => window.open(img.src, '_blank', 'noopener'));
+    wrap.appendChild(img);
+  }
+
+  if (m.text) {
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = m.text;
+    wrap.appendChild(bubble);
+  }
+
+  // 悬停出「引用」——只在有文字或图片的行上，且功能开着
+  const qbtn = document.createElement('button');
+  qbtn.type = 'button';
+  qbtn.className = 'quote-btn';
+  qbtn.title = '引用这条';
+  qbtn.textContent = '引用';
+  qbtn.addEventListener('click', () => setQuote(m));
+  wrap.appendChild(qbtn);
+
+  row.appendChild(wrap);
   msgs.appendChild(row);
   if (stick) {
     msgs.scrollTop = msgs.scrollHeight;
@@ -79,18 +191,42 @@ function appendMessage(m) {
   updateScrollBtn();
 }
 
+/* ---------- 引用 ---------- */
+function setQuote(m) {
+  quote = { id: m.id, role: m.role, text: (m.text || m.img_desc || '[照片]').slice(0, 300) };
+  quoteLabel.textContent = m.role === 'human' ? '引用我' : '引用对方';
+  quoteText.textContent = quote.text;
+  quoteBar.hidden = false;
+  input.focus();
+}
+
+function clearQuote() {
+  quote = null;
+  quoteBar.hidden = true;
+}
+btnQuoteClear.addEventListener('click', clearQuote);
+
 /* ---------- 发送 ---------- */
 async function send() {
   const text = input.value.trim();
-  if (!text) return;
+  if (!text && !photoDraft) return;
+  const sentPhoto = photoDraft;   // 先留底：请求失败要原样还回去，照片尤其不能丢
+  const sentQuote = quote;
   input.value = '';
   autoGrow();
+  const body = { text };
+  if (sentPhoto) body.image = sentPhoto.data;
+  if (sentQuote) body.quote = sentQuote;
+  clearQuote();
+  photoDraft = null;
+  renderPhotoDraft();
   btnSend.disabled = true;
+  btnPhoto.disabled = true;
   try {
     const r = await fetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     });
     const data = await r.json();
     if (!data.ok) throw new Error(data.error || r.status);
@@ -102,15 +238,26 @@ async function send() {
     updateScrollBtn();
   } catch (e) {
     console.error('send failed:', e);
-    elStatus.textContent = '发送失败，稍后再试';
+    const msg = typeof e?.message === 'string' && e.message && e.message !== 'undefined'
+      ? e.message : '发送失败，稍后再试';
+    elStatus.textContent = msg;
     setTimeout(() => { if (!typing) elStatus.textContent = ''; }, 2500);
+    // 还回去：文字重打一遍能忍，照片重选一遍不能忍
+    photoDraft = sentPhoto;
+    renderPhotoDraft();
+    if (sentQuote) setQuote(sentQuote);
+    input.value = text;
+    autoGrow();
+  } finally {
+    btnPhoto.disabled = !features;
   }
 }
 
 function autoGrow() {
   input.style.height = 'auto';
   input.style.height = Math.min(input.scrollHeight, 152) + 'px';
-  btnSend.disabled = !input.value.trim();
+  // 有照片草稿时，哪怕一个字没打也能发（照片就是那条消息）
+  btnSend.disabled = !input.value.trim() && !photoDraft;
 }
 
 input.addEventListener('input', autoGrow);
@@ -122,6 +269,71 @@ input.addEventListener('keydown', (e) => {
   }
 });
 btnSend.addEventListener('click', send);
+
+/* ---------- 发照片（入口在发送按钮左侧；只能是照片） ---------- */
+function renderPhotoDraft() {
+  let chip = document.getElementById('photo-draft');
+  if (!photoDraft) {
+    if (chip) chip.remove();
+    autoGrow();
+    return;
+  }
+  if (!chip) {
+    chip = document.createElement('div');
+    chip.id = 'photo-draft';
+    const img = document.createElement('img');
+    img.alt = '待发送的照片';
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'photo-draft-drop';
+    drop.title = '移除这张照片';
+    drop.innerHTML = '&times;';
+    drop.addEventListener('click', () => { photoDraft = null; renderPhotoDraft(); });
+    chip.append(img, drop);
+    // 放在输入框正上方（引用条之后），与 quote 条同一列 —— 塞进行内最左会和居中的输入框脱节
+    quoteBar.insertAdjacentElement('afterend', chip);
+  }
+  chip.querySelector('img').src = photoDraft.data;
+  autoGrow();
+}
+
+/* 浏览器端先把照片压到 1600px / JPEG 0.85 再发：省上行、省它那边的 token */
+function shrinkToDataURL(file, maxSide = 1600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      const isPng = file.type === 'image/png';
+      resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', quality));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片读不出来')); };
+    img.src = url;
+  });
+}
+
+btnPhoto.addEventListener('click', () => photoInput.click());
+photoInput.addEventListener('change', async () => {
+  const file = photoInput.files && photoInput.files[0];
+  photoInput.value = '';
+  if (!file) return;
+  if (!features) { elStatus.textContent = '生图与识图都要填，才能发图片'; return; }
+  try {
+    photoDraft = { data: await shrinkToDataURL(file), name: file.name };
+    renderPhotoDraft();
+  } catch (e) {
+    console.error(e);
+    elStatus.textContent = '图片读不出来，换一张试试';
+    setTimeout(() => { if (!typing) elStatus.textContent = ''; }, 2500);
+  }
+});
 
 /* ---------- 通用 POST ---------- */
 async function post(url, body) {
@@ -319,15 +531,43 @@ document.addEventListener('click', (e) => {
   if (!elPanel.hidden && !elPanel.contains(e.target) && !btnSessions.contains(e.target)) closePanel();
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') { disarmClear(); closePanel(); }
+  if (e.key === 'Escape') { disarmClear(); closePanel(); closeSettings(); clearQuote(); }
 });
 
 /* ---------- SSE ---------- */
+/* ---------- 顶栏：对方是谁（昵称 + 头像） ---------- */
+function renderPeer() {
+  const enabled = features;
+  const name = enabled ? (persona.nickname || '') : '';
+  const pending = enabled && avatarPending.includes(sessionCache.find((s) => s.current)?.id);
+  elPeer.hidden = !enabled;
+  document.querySelector('.brand').hidden = enabled;  // 有对方资料时让位
+  if (!enabled) return;
+  elPeerName.textContent = name || '（还没给自己起名字）';
+  const av = persona.avatar || '';
+  elPeerAvatar.hidden = !av;
+  elPeerFallback.hidden = !!av;
+  elPeerPending.hidden = !pending;
+  if (av) {
+    elPeerAvatar.src = '/media/' + av;
+    elPeerAvatar.onerror = () => { elPeerAvatar.hidden = true; elPeerFallback.hidden = false; };
+  } else {
+    elPeerFallback.textContent = (name || '?').slice(0, 1);
+  }
+  elPeer.title = persona.identity || '';
+}
+
 function applyState(ev) {
   // 整页重放：连上、切会话、新建、删除、改名、清空都走这里
   setOnline(ev.online);
+  features = !!ev.features;
+  persona = ev.persona || {};
+  myInfo = ev.me || { nickname: '', avatar: '' };
+  avatarPending = ev.avatar_pending || [];
   sessionCache = ev.sessions || [];
   renderSessions(sessionCache);
+  renderPeer();
+  syncPhotoBtn();
   msgs.textContent = '';
   maxId = -1;
   unread = 0;
@@ -338,6 +578,12 @@ function applyState(ev) {
   for (const m of ev.messages || []) appendMessage(m);
   msgs.scrollTop = msgs.scrollHeight;
   updateScrollBtn();
+}
+
+function syncPhotoBtn() {
+  btnPhoto.hidden = !features;
+  if (!features) { photoDraft = null; renderPhotoDraft(); clearQuote(); }
+  else btnPhoto.disabled = false;
 }
 
 function patchSessions(list) {
@@ -351,17 +597,197 @@ function patchSessions(list) {
 function handleEvent(ev) {
   if (ev.type === 'state') {
     applyState(ev);
+  } else if (ev.type === 'persona') {
+    // 它给自己起好名字了（或头像画完了）：换顶栏，必要时重画消息行的头像
+    if (ev.sid === (sessionCache.find((s) => s.current) || {}).id) {
+      persona = ev.persona || persona;
+      if (persona.avatar) avatarPending = avatarPending.filter((s) => s !== ev.sid);
+      renderPeer();
+      refreshAvatars();
+    }
   } else if (ev.type === 'message') {
     appendMessage(ev.message);
     if (ev.sessions) patchSessions(ev.sessions);
+    if (ev.persona) { persona = ev.persona; renderPeer(); }
   } else if (ev.type === 'sessions') {
     patchSessions(ev.sessions);
+    renderPeer();
   } else if (ev.type === 'turn_end') {
     if (ev.turn === currentTurn) setTyping(false); // 被打断的旧轮号不匹配，忽略
   } else if (ev.type === 'status') {
     setOnline(ev.online);
   }
 }
+
+/* 头像是后来才画好的：已渲染的行就地换图，不整页重放（正在打的字不能被冲掉） */
+function refreshAvatars() {
+  if (!features) return;
+  const src = persona.avatar ? '/media/' + persona.avatar : '';
+  msgs.querySelectorAll('.msg.ai > .avatar').forEach((box) => {
+    const want = (persona.nickname || '?').slice(0, 1);
+    if (src) {
+      let img = box.querySelector('img');
+      if (!img) {
+        box.classList.remove('empty');
+        box.textContent = '';
+        img = document.createElement('img');
+        box.appendChild(img);
+      }
+      if (img.getAttribute('src') !== src) img.src = src;
+    } else if (!box.classList.contains('empty')) {
+      box.querySelector('img')?.remove();
+      box.classList.add('empty');
+      box.textContent = want;
+    } else {
+      box.textContent = want;
+    }
+  });
+}
+
+/* ---------- 设置（左下角齿轮） ---------- */
+const SET_FIELDS = [
+  ['cfg-endpoint', 'endpoint'], ['cfg-key', 'api_key'], ['cfg-model', 'model'],
+  ['vis-endpoint', 'vision.endpoint'], ['vis-key', 'vision.api_key'], ['vis-model', 'vision.model'],
+  ['gen-endpoint', 'imagegen.endpoint'], ['gen-key', 'imagegen.api_key'],
+  ['gen-model', 'imagegen.model'], ['gen-size', 'imagegen.size'],
+  ['me-nickname', 'me.nickname'],
+];
+
+function getPath(obj, path) {
+  return path.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+}
+function setPath(obj, path, val) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => (o[k] = o[k] || {}), obj);
+  target[last] = val;
+}
+
+function fillSettings(cfg) {
+  for (const [id, path] of SET_FIELDS) {
+    const el = document.getElementById(id);
+    if (el) el.value = getPath(cfg, path) || '';
+  }
+  const st = cfg.vision_state || {};
+  const box = document.getElementById('detect-state');
+  box.textContent = st.detail || '';
+  box.dataset.known = st.known === true ? 'yes' : st.known === false ? 'no' : '';
+  document.getElementById('set-gate').hidden = !!cfg.features;
+  renderMeAvatar(cfg.me || {});
+  document.getElementById('set-status').textContent =
+    cfg.features ? '昵称与发图片：已生效' : '昵称与发图片：未生效';
+}
+
+function renderMeAvatar(me) {
+  const img = document.getElementById('me-avatar-preview');
+  const fb = document.getElementById('me-avatar-fallback');
+  const name = me.nickname || myInfo.nickname || '?';
+  if (me.avatar) {
+    img.src = '/media/' + me.avatar;
+    img.hidden = false;
+    fb.hidden = true;
+  } else {
+    img.hidden = true;
+    fb.hidden = false;
+    fb.textContent = name.slice(0, 1);
+  }
+  document.getElementById('me-avatar-hint').textContent =
+    me.avatar_desc ? 'AI 看到的你：' + me.avatar_desc : (me.avatar ? '头像的描述还没算出来' : '');
+}
+
+async function openSettings() {
+  elSettings.hidden = false;
+  btnSettings.setAttribute('aria-expanded', 'true');
+  const data = await (await fetch('/api/config')).json();
+  if (data.ok) fillSettings(data.config);
+}
+
+function closeSettings() {
+  elSettings.hidden = true;
+  btnSettings.setAttribute('aria-expanded', 'false');
+}
+
+btnSettings.addEventListener('click', () => (elSettings.hidden ? openSettings() : closeSettings()));
+document.getElementById('settings-close').addEventListener('click', closeSettings);
+document.getElementById('cfg-cancel').addEventListener('click', closeSettings);
+document.getElementById('cfg-detect').addEventListener('click', () => saveSettings(true));
+
+async function saveSettings(forceDetect) {
+  const body = { detect: !!forceDetect };
+  for (const [id, path] of SET_FIELDS) {
+    const el = document.getElementById(id);
+    if (el) setPath(body, path, el.value.trim());
+  }
+  const status = document.getElementById('set-status');
+  status.textContent = '保存中…';
+  const save = document.getElementById('cfg-save');
+  save.disabled = true;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!data.ok) throw new Error(data.error || r.status);
+    fillSettings(data.config);
+    features = !!data.config.features;
+    syncPhotoBtn();
+    status.textContent = data.config.features ? '已保存 · 昵称与发图片已生效' : '已保存';
+  } catch (e) {
+    console.error('config save failed:', e);
+    status.textContent = '保存失败';
+  } finally {
+    save.disabled = false;
+    setTimeout(() => { if (status.textContent === '保存中…') status.textContent = ''; }, 4000);
+  }
+}
+document.getElementById('cfg-save').addEventListener('click', () => saveSettings(false));
+
+/* 换头像：先在浏览器里压小，再交给后端存盘并算描述 */
+const meAvatarInput = document.getElementById('me-avatar-input');
+document.getElementById('me-avatar-pick').addEventListener('click', () => meAvatarInput.click());
+meAvatarInput.addEventListener('change', async () => {
+  const file = meAvatarInput.files && meAvatarInput.files[0];
+  meAvatarInput.value = '';
+  if (!file) return;
+  try {
+    const data = await shrinkToDataURL(file, 512, 0.88);
+    const status = document.getElementById('set-status');
+    status.textContent = '头像上传中…';
+    const r = await fetch('/api/me/avatar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: data }),
+    });
+    const out = await r.json();
+    if (!out.ok) throw new Error(out.error || r.status);
+    fillSettings(out.config);
+    myInfo = out.config.me || myInfo;
+    status.textContent = '头像已换';
+  } catch (e) {
+    console.error('avatar upload failed:', e);
+    document.getElementById('set-status').textContent = e.message || '头像上传失败';
+  }
+});
+
+document.getElementById('me-avatar-clear').addEventListener('click', async () => {
+  document.getElementById('me-avatar-hint').textContent = '';
+  const r = await fetch('/api/me/avatar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: '' }),
+  });
+  const out = await r.json();
+  if (out.ok) { fillSettings(out.config); myInfo = out.config.me || myInfo; }
+});
+
+// 点别处或按 Esc：收起设置
+document.addEventListener('click', (e) => {
+  if (!elSettings.hidden && !elSettings.contains(e.target) && !btnSettings.contains(e.target)) {
+    closeSettings();
+  }
+});
 
 function connect() {
   const es = new EventSource('/api/stream');

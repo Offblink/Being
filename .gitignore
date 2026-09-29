@@ -2,5 +2,6 @@
 config.json
 messages.json*
 sessions/
+media/
 __pycache__/
 *.pyc

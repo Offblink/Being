@@ -10,5 +10,21 @@
     "min": 1.5,
     "max": 20.0,
     "jitter": 0.15
+  },
+  "vision": {
+    "endpoint": "",
+    "api_key": "",
+    "model": ""
+  },
+  "imagegen": {
+    "endpoint": "",
+    "api_key": "",
+    "model": "",
+    "size": "1024x1024"
+  },
+  "me": {
+    "nickname": "",
+    "avatar": "",
+    "avatar_desc": ""
   }
 }
