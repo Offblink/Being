@@ -1292,10 +1292,24 @@ async def api_config_put(payload: dict) -> dict:
 
 @app.post("/api/me/avatar")
 async def api_me_avatar(payload: dict) -> dict:
-    """传我的头像（只收照片）。识图与生图都填了才存 —— 与昵称同一个开关。"""
+    """传我的头像（只收照片）。识图与生图都填了才存 —— 与昵称同一个开关。
+    image 为空表示「移除头像」，不是坏图。"""
     if not features_enabled():
         return {"ok": False, "error": "生图与识图都要填，才能用昵称和头像"}
-    raw, err = _decode_data_url(str(payload.get("image") or ""))
+    data = str(payload.get("image") or "").strip()
+    old = cfg["me"].get("avatar")
+    if not data:
+        cfg["me"]["avatar"] = ""
+        cfg["me"]["avatar_desc"] = ""
+        save_config()
+        if old:
+            try:
+                (MEDIA_DIR / old).unlink(missing_ok=True)
+            except OSError:
+                pass
+        broadcast_state()
+        return {"ok": True, "config": config_payload()}
+    raw, err = _decode_data_url(data)
     if raw is None:
         return {"ok": False, "error": err or "图片读不出来"}
     ext = sniff_image(raw)
@@ -1303,12 +1317,11 @@ async def api_me_avatar(payload: dict) -> dict:
         return {"ok": False, "error": "只收照片（jpeg/png/webp/gif）"}
     if len(raw) > 2 * 1024 * 1024:
         return {"ok": False, "error": "头像压到 2MB 以内"}
-    old = cfg["me"].get("avatar")
     name = save_image_bytes(media_name("me", ext), raw)
     cfg["me"]["avatar"] = name
     cfg["me"]["avatar_desc"] = await describe_image(name)  # 算一次就缓存，AI 才"看得见"
     save_config()
-    if old:
+    if old and old != name:
         try:
             (MEDIA_DIR / old).unlink(missing_ok=True)
         except OSError:
