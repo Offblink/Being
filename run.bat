@@ -1,5 +1,5 @@
 @echo off
-rem Being-Vision launcher - double-click entry point.
+rem Being launcher - double-click entry point.
 rem Starts the local server (own window) and opens the chat UI in the browser.
 rem ASCII-only + CRLF on purpose: non-ASCII bytes in the cmd-parsed header
 rem get read as OEM code page and break the first lines.
@@ -43,13 +43,13 @@ if /i "%~1"=="-Check" (
 
 curl -s -o NUL --max-time 1 "%URL%" 2>nul
 if not errorlevel 1 (
-  echo Being-Vision is already running - opening the browser.
+  echo Being is already running - opening the browser.
   start "" "%URL%"
   exit /b 0
 )
 
-echo Starting Being-Vision ... close the "Being-Vision server" window to stop it.
-start "Being-Vision server" cmd /c "python server.py"
+echo Starting Being ... close the "Being server" window to stop it.
+start "Being server" cmd /c "python server.py"
 
 rem Wait until it answers, then open the UI. ping, not timeout: timeout needs
 rem a console input handle and dies when stdio is redirected.
@@ -59,7 +59,7 @@ for /l %%i in (1,1,60) do (
   ping -n 2 127.0.0.1 >nul
 )
 echo [ERROR] the server did not come up within 60 seconds.
-echo Look at the "Being-Vision server" window for the traceback.
+echo Look at the "Being server" window for the traceback.
 pause
 exit /b 1
 
