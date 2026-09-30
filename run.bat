@@ -1,5 +1,5 @@
 @echo off
-rem Being launcher - double-click entry point.
+rem Being-Vision launcher - double-click entry point.
 rem Starts the local server (own window) and opens the chat UI in the browser.
 rem ASCII-only + CRLF on purpose: non-ASCII bytes in the cmd-parsed header
 rem get read as OEM code page and break the first lines.
@@ -7,16 +7,19 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
-rem Keep in sync with "port" in config.json.
-set "PORT=8619"
-set "URL=http://127.0.0.1:%PORT%/"
-
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] python not found in PATH. Install Python 3 first.
   pause
   exit /b 1
 )
+
+rem Port comes from config.json (8619 when unset or unreadable), so two
+rem instances can sit side by side on different ports without editing this file.
+set "PORT=8619"
+for /f "delims=" %%p in ('python -c "import json;print(json.load(open('config.json',encoding='utf-8')).get('port') or 8619)" 2^>nul') do set "PORT=%%p"
+set "URL=http://127.0.0.1:%PORT%/"
+
 where curl >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] curl not found. Windows 10 1803+ ships it.
@@ -32,7 +35,7 @@ if /i "%~1"=="-Check" (
   echo url     : %URL%
   echo python  : & where python
   echo config  :
-  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};g=d.get('imagegen') or {};on=bool(v.get('endpoint') and v.get('model') and g.get('endpoint') and g.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  imagegen:','set' if g.get('model') else 'MISSING');print('  avatar+photo:','ON' if on else 'OFF (fill vision AND imagegen)')"
+  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};on=bool(v.get('endpoint') and v.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  photos  :','ON' if on else 'OFF (fill vision endpoint + model)')"
   curl -s -o NUL --max-time 1 "%URL%" 2>nul
   if errorlevel 1 (echo status  : not running) else (echo status  : already running)
   exit /b 0
@@ -40,13 +43,13 @@ if /i "%~1"=="-Check" (
 
 curl -s -o NUL --max-time 1 "%URL%" 2>nul
 if not errorlevel 1 (
-  echo Being is already running - opening the browser.
+  echo Being-Vision is already running - opening the browser.
   start "" "%URL%"
   exit /b 0
 )
 
-echo Starting Being ... close the "Being server" window to stop it.
-start "Being server" cmd /c "python server.py"
+echo Starting Being-Vision ... close the "Being-Vision server" window to stop it.
+start "Being-Vision server" cmd /c "python server.py"
 
 rem Wait until it answers, then open the UI. ping, not timeout: timeout needs
 rem a console input handle and dies when stdio is redirected.
@@ -56,7 +59,7 @@ for /l %%i in (1,1,60) do (
   ping -n 2 127.0.0.1 >nul
 )
 echo [ERROR] the server did not come up within 60 seconds.
-echo Look at the "Being server" window for the traceback.
+echo Look at the "Being-Vision server" window for the traceback.
 pause
 exit /b 1
 
