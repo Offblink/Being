@@ -7,16 +7,19 @@ setlocal
 chcp 65001 >nul
 cd /d "%~dp0"
 
-rem Keep in sync with "port" in config.json.
-set "PORT=8619"
-set "URL=http://127.0.0.1:%PORT%/"
-
 where python >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] python not found in PATH. Install Python 3 first.
   pause
   exit /b 1
 )
+
+rem Port comes from config.json (8619 when unset or unreadable), so two
+rem instances can sit side by side on different ports without editing this file.
+set "PORT=8619"
+for /f "delims=" %%p in ('python -c "import json;print(json.load(open('config.json',encoding='utf-8')).get('port') or 8619)" 2^>nul') do set "PORT=%%p"
+set "URL=http://127.0.0.1:%PORT%/"
+
 where curl >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] curl not found. Windows 10 1803+ ships it.
@@ -32,7 +35,7 @@ if /i "%~1"=="-Check" (
   echo url     : %URL%
   echo python  : & where python
   echo config  :
-  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};g=d.get('imagegen') or {};on=bool(v.get('endpoint') and v.get('model') and g.get('endpoint') and g.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  imagegen:','set' if g.get('model') else 'MISSING');print('  avatar+photo:','ON' if on else 'OFF (fill vision AND imagegen)')"
+  python -c "import json;d=json.load(open('config.json',encoding='utf-8'));v=d.get('vision') or {};on=bool(v.get('endpoint') and v.get('model'));print('  model   :',d.get('model'));print('  endpoint:',d.get('endpoint'));print('  api_key :','set' if d.get('api_key') else 'MISSING');print('  delay   :',d.get('delay'));print('  vision  :','set' if v.get('model') else 'MISSING');print('  photos  :','ON' if on else 'OFF (fill vision endpoint + model)')"
   curl -s -o NUL --max-time 1 "%URL%" 2>nul
   if errorlevel 1 (echo status  : not running) else (echo status  : already running)
   exit /b 0

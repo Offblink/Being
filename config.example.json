@@ -16,15 +16,7 @@
     "api_key": "",
     "model": ""
   },
-  "imagegen": {
-    "endpoint": "",
-    "api_key": "",
-    "model": "",
-    "size": "1024x1024"
-  },
   "me": {
-    "nickname": "",
-    "avatar": "",
-    "avatar_desc": ""
+    "nickname": ""
   }
 }
